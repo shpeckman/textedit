@@ -1,0 +1,152 @@
+# spec/interfaces_spec.cr
+require "./spec_helper"
+
+private class Paged
+  include Textedit::Layout
+
+  def initialize(@lines : Textedit::LineLayout, @page : Int32)
+  end
+
+  def row_count : Int32
+    @lines.row_count
+  end
+
+  def row_of(offset : Int32) : Int32
+    @lines.row_of(offset)
+  end
+
+  def row_start(row : Int32) : Int32
+    @lines.row_start(row)
+  end
+
+  def row_end(row : Int32) : Int32
+    @lines.row_end(row)
+  end
+
+  def cell_of(offset : Int32) : Textedit::Cell
+    @lines.cell_of(offset)
+  end
+
+  def offset_in(row : Int32, column : Int32) : Int32
+    @lines.offset_in(row, column)
+  end
+
+  def page_rows : Int32
+    @page
+  end
+end
+
+private struct Digits
+  include Textedit::Filter
+
+  def filter(text : String) : String
+    text.delete { |char| !char.ascii_number? }
+  end
+end
+
+describe Textedit::SingleLine do
+  it "turns line breaks and tabs into spaces and drops other control characters" do
+    Textedit::SingleLine.new.filter("a\nb\tc\e").should eq("a b c")
+    Textedit::SingleLine.new.filter("plain").should eq("plain")
+  end
+end
+
+describe Textedit::MultiLine do
+  it "keeps line breaks, replaces tabs and drops other control characters" do
+    Textedit::MultiLine.new.filter("a\nb\tc\e").should eq("a\nb c")
+    Textedit::MultiLine.new("    ").filter("\tx").should eq("    x")
+  end
+end
+
+describe Textedit::Filter do
+  it "lets a host decide what text a document accepts" do
+    text = document("a1b2", filter: Digits.new)
+    text.value.should eq("12")
+    text.insert("x3")
+    text.value.should eq("123")
+  end
+end
+
+describe Textedit::LineEnding do
+  it "detects the most common line ending and normalizes to line feeds" do
+    Textedit::LineEnding.detect("a\r\nb\r\nc\nd").should eq(Textedit::LineEnding::CRLF)
+    Textedit::LineEnding.detect("a\rb").should eq(Textedit::LineEnding::CR)
+    Textedit::LineEnding.detect("a\nb").should eq(Textedit::LineEnding::LF)
+    Textedit::LineEnding.normalize("a\r\nb\rc").should eq("a\nb\nc")
+  end
+end
+
+describe Textedit::Register do
+  it "keeps the last text written and reads it back at once" do
+    register = Textedit::Register.new
+    register.write("hey")
+    found = nil.as(String?)
+    register.read { |text| found = text; nil }
+    found.should eq("hey")
+  end
+
+  it "keeps bounded unique history with indexed reads" do
+    register = Textedit::Register.new(limit: 2)
+    register.write("one")
+    register.write("two")
+    register.write("one")
+    register.write("three")
+    register.entries.should eq(["three", "one"])
+    register.size.should eq(2)
+    found = nil.as(String?)
+    register.read(1) { |text| found = text; nil }
+    found.should eq("one")
+    register.read(2) { |text| found = text; nil }
+    found.should be_nil
+  end
+end
+
+describe Textedit::LineLayout do
+  it "maps offsets to rows and display columns, counting wide clusters twice" do
+    text   = lines("a日本\nxy")
+    layout = text.layout
+    layout.row_count.should eq(2)
+    layout.row_of(4).should eq(1)
+    layout.row_start(1).should eq(4)
+    layout.row_end(0).should eq(3)
+    layout.row_end(9).should eq(6)
+    layout.cell_of(2).should eq(Textedit::Cell.new(3, 0))
+    layout.offset_in(0, 2).should eq(1)
+    layout.offset_in(0, 3).should eq(2)
+    layout.offset_in(0, 99).should eq(3)
+    layout.offset_in(1, 1).should eq(5)
+    layout.page_rows.should eq(1)
+  end
+end
+
+describe Textedit::Layout do
+  it "drives vertical motion and paging through the host's layout" do
+    text = lines((1..6).join('\n'))
+    text.layout = Paged.new(Textedit::LineLayout.new(text.buffer), 2)
+    text.move(0)
+    text.run(Textedit::Command::PageDown)
+    text.layout.row_of(text.cursor).should eq(2)
+    text.run(Textedit::Command::PageDown, selecting: true)
+    text.selected_text.should eq("3\n4\n")
+    text.run(Textedit::Command::PageUp)
+    text.layout.row_of(text.cursor).should eq(2)
+  end
+end
+
+describe Textedit::Listener do
+  it "hears every change as it lands, every batch once its carets are seated, and every caret move" do
+    text   = document("ab")
+    events = Recorder.new
+    stop   = text.listen(events)
+    text.place_carets([Textedit::Caret.at(1), Textedit::Caret.at(2)])
+    text.insert("X")
+    events.applied.should eq([change(2, "", "X"), change(1, "", "X")])
+    events.edited.should eq([events.applied])
+    events.moves.should eq(2)
+    text.undo
+    events.edited.last.should eq([change(1, "X", ""), change(2, "X", "")])
+    stop.call
+    text.insert("Y")
+    events.edited.size.should eq(2)
+  end
+end
