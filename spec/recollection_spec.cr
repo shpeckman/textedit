@@ -1,9 +1,9 @@
-# spec/recall_spec.cr
+# spec/recollection_spec.cr
 require "./spec_helper"
 
-describe Textedit::Recall do
+describe Textedit::Recollection do
   it "recalls entries back and forth, keeps the draft and drops duplicates" do
-    history = Textedit::Recall.new(["a", "b"], limit: 3)
+    history = Textedit::Recollection.new(["a", "b"], limit: 3)
     history.back("draft").should eq("b")
     history.back("ignored").should eq("a")
     history.back("x").should be_nil
@@ -18,7 +18,7 @@ describe Textedit::Recall do
   end
 
   it "trims its entries when the limit is lowered" do
-    history = Textedit::Recall.new(["a", "b", "c"])
+    history = Textedit::Recollection.new(["a", "b", "c"])
     history.limit = 2
     history.entries.should eq(["b", "c"])
     history.browsing?.should be_false

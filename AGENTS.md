@@ -25,7 +25,7 @@ Orientation for AI agents working on this repository.
 - `src/textedit/macro_log.cr` — `MacroLog(C)`: the entries (`C | String`) a `Recording(C)` view takes down; the replay itself lives in `Recording`, because it needs the concrete view type to dispatch.
 - `src/textedit/search.cr` — regex and literal search; literals and regexes conservatively proved line-local are kept per line and updated from the buffer's journal. Multiline-capable or uncertain regexes rescan the whole text.
 - `src/textedit/token.cr`, `token_source.cr` — the `Token` value (start, count, kind; columns count clusters), and the two interfaces that carry it: `TokenSource` (`tokens(buffer, line)`) and `Tokenizer` (`tokens(text)`). Neither has an implementation here.
-- `src/textedit/recall.cr` — input history for single-line fields, standalone.
+- `src/textedit/recollection.cr` — `Recollection`: input history for single-line fields (entries, browsing index, draft).
 - `src/textedit/document.cr` — `Document`: built from a `String` or a `Buffer`; the text, `filter`, `history`, `constraints` (`admits?`, `capacity`), `style`, `line_ending`, marks, followers (`track`), listeners, views, transactions, dirty tracking (`modified?`, `mark_saved`, by history or by revision), revision mapping (`map`), and the edit pipeline: `apply` (user strokes), `replace_ranges` (structural, any origin), `assign` (behind `value=`), and the private `revert` (undo and redo through the history's `Restore`). Every path builds a `Commit` for the history.
 - `src/textedit/storage.cr` — `Storage`: a document's `path` and `final_newline`, `Storage.open` (mapped), `export`, and the atomic writable-mmap `save`.
 - `src/textedit/view.cr` — `View` core and the `Motion` enum: carets, primary index, layout, `dragging?`, `View.new(graphemes, text, **options)` merged over `self.defaults`, `value`/`value=`, motion, `move_carets`, `select_range`, `place_carets`, `add_caret`, `replace_ranges`, `transaction`, `seat` (which places carets and tells listeners), `follow` (carries this view's carets through a change another view made), the private hooks features override (`commanded`, `typed`, `pasted`, `selected`, `pairing?`), `enter` (the edit gate every `run` calls), `put` and `revise`.
@@ -44,6 +44,7 @@ Orientation for AI agents working on this repository.
   - `undoing.cr` — `UndoRedo`, `Undoing`.
   - `finding.cr`, `replacing.cr` — `Finding` (`find`, `add_caret_at_every_match`) and `Replacing` (`replace_match`, `replace_all`).
   - `folding.cr`, `snipping.cr`, `recording.cr` — `Folding`, `Snipping` (`insert_snippet`), `Recording(C)`.
+  - `recalling.cr` — `Recall`, `Recalling`: steps the view's text through a lazily made `Recollection`.
 - `src/textedit/presets.cr` — `Field`, `Area`, `Reader` and `Editor`, each with its `Command` union and `self.defaults`.
 - Interfaces the host implements, each with its defaults:
   - `graphemes.cr` — `Graphemes` and `ClusterKind`; string boundaries are abstract, and byte boundaries default to one temporary string copy.

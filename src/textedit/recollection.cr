@@ -1,6 +1,6 @@
-# src/textedit/recall.cr
+# src/textedit/recollection.cr
 module Textedit
-  class Recall
+  class Recollection
     LIMIT = 100
 
     getter entries : Array(String)

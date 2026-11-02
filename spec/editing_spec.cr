@@ -763,6 +763,52 @@ describe Textedit::Editor do
     end
   end
 
+  describe "recall" do
+    it "steps back and forth through submitted entries, keeping the draft" do
+      field = Textedit::Field.new(GRAPHEMES, "dra")
+      field.recollection.push("ls")
+      field.recollection.push("cd /")
+      field.run(Textedit::Recall::Back).should be_true
+      field.value.should eq("cd /")
+      field.cursor.should eq(4)
+      field.run(Textedit::Recall::Back).should be_true
+      field.value.should eq("ls")
+      field.run(Textedit::Recall::Back).should be_false
+      field.value.should eq("ls")
+      field.run(Textedit::Recall::Forward).should be_true
+      field.value.should eq("cd /")
+      field.run(Textedit::Recall::Forward).should be_true
+      field.value.should eq("dra")
+      field.run(Textedit::Recall::Forward).should be_false
+    end
+
+    it "undoes a recalled entry back to the text it replaced" do
+      field = Textedit::Field.new(GRAPHEMES, "draft")
+      field.recollection.push("old")
+      field.run(Textedit::Recall::Back)
+      field.value.should eq("old")
+      field.undo.should be_true
+      field.value.should eq("draft")
+    end
+
+    it "shares one recollection between fields" do
+      first  = Textedit::Field.new(GRAPHEMES)
+      second = Textedit::Field.new(GRAPHEMES)
+      second.recollection = first.recollection
+      first.recollection.push("shared")
+      second.run(Textedit::Recall::Back).should be_true
+      second.value.should eq("shared")
+    end
+
+    it "refuses while the document refuses user edits" do
+      field = Textedit::Field.new(GRAPHEMES, "fixed", constraints: [Textedit::ReadOnly.new])
+      field.recollection.push("other")
+      field.run(Textedit::Recall::Back).should be_false
+      field.value.should eq("fixed")
+      field.recollection.browsing?.should be_false
+    end
+  end
+
   it "finds the bracket matching the one beside an empty primary caret" do
     text = editor("if (a(b)) x")
     text.move(4)

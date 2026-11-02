@@ -77,8 +77,8 @@ Four ready-made views cover the common widgets. Each one declares its command un
 
 | Preset | Features | Document defaults |
 | --- | --- | --- |
-| `Field` | `Typing`, `Deleting`, `Selecting`, `Copying`, `Pasting`, `Undoing` | `SingleLine` filter, `History::Linear` |
-| `Area` | `Field`'s, plus `Spacing` and `Multicaret` | `MultiLine` filter, `History::Linear` |
+| `Field` | `Typing`, `Deleting`, `Selecting`, `Copying`, `Pasting`, `Undoing`, `Recalling` | `SingleLine` filter, `History::Linear` |
+| `Area` | `Field`'s except `Recalling`, plus `Spacing` and `Multicaret` | `MultiLine` filter, `History::Linear` |
 | `Reader` | `Selecting`, `Multicaret`, `Copying`, `Finding`, `Folding` | `MultiLine` filter, no history |
 | `Editor` | every feature | `MultiLine` filter, `History::Linear` |
 
@@ -139,6 +139,7 @@ A command a view lacks is a compile error, not a `false` at run time. A preset c
 | `Folding` | | `folds`, `folds?`, `lift_carets` | |
 | `Snipping` | | `insert_snippet` | |
 | `Recording(C)` | | `record`, `stop`, `replay`, `macros` | `Typing` |
+| `Recalling` | `Recall` | `recollection` | |
 
 The "Needs" column is checked when the module is included: including `Pasting` before `Typing` and `Copying`, or `LineEditing` before `Spacing`, stops the build with a message naming the order. `Recording(C)` takes the view's whole command union; running a command whose enum is missing from `C` is a compile error, so a recording can never silently skip a step.
 
@@ -219,7 +220,7 @@ text.capacity                          # => 80, the lowest capacity of all const
 
 `Origin` is `User` (typing and commands), `Code` (`value=` and `replace_ranges` from the host), `Undo` or `Redo`. `ReadOnly` admits only `Code`, so the host can still set the text. `MaxLength` trims typed and pasted text to fit, shared across carets, and truncates text given to `value=` or to the constructor. A host constraint includes `Textedit::Constraint` and overrides `admits?(origin)`, `capacity`, or both.
 
-While a document refuses user edits, a view refuses every command whose enum edits — `Deletion`, `Whitespace`, `Lines`, `Transform`, `Clip` and `UndoRedo` — along with `insert`, `paste`, `insert_snippet`, `replace_match` and `replace_all`. Motion, selection and copy still work.
+While a document refuses user edits, a view refuses every command whose enum edits — `Deletion`, `Whitespace`, `Lines`, `Transform`, `Clip`, `UndoRedo` and `Recall` — along with `insert`, `paste`, `insert_snippet`, `replace_match` and `replace_all`. Motion, selection and copy still work.
 
 ### History
 
@@ -290,6 +291,7 @@ text.redo
 | `Copy` | `Selection` |
 | `Clip` | `Cut`, `Paste`, `PastePrevious` |
 | `UndoRedo` | `Undo`, `Redo` |
+| `Recall` | `Back`, `Forward` |
 
 Each enum's `edits?` says whether its commands change the text.
 
@@ -306,7 +308,7 @@ field.run(KEYS[key], selecting: shift)
 `run` returns `true` when the command applied and `false` when it did not, so a host can let the key go on to something else:
 
 - Always `true`: `Motion`, `Selection::All`, `Selection::Word`, `Selection::Line`, `Carets::AddAbove`, `Carets::AddBelow`, every `Box` and `Deletion` command, `Whitespace::Tab`, `Copy::Selection`, `Clip::Cut` and `Clip::Paste` — even when there was nothing to delete or copy.
-- `false` when there was nothing to do: `Carets::Collapse` and `Carets::RemoveLast` with one caret; the bracket and quote `Selection` commands with no target; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `AddPerLine` when no selection spans lines; `Transform::DuplicateSelection` and the case transforms without a selection to change; `Sort`, `Reverse`, `Unique`, `Join` and `TrimTrailingWhitespace` when the lines did not change; `Clip::PastePrevious` without an active paste or older entry; `Whitespace::NewLine` and every `Lines` command when the text did not change (`ToggleComment` also without a `comment` in the style); `UndoRedo` with nothing to undo or redo, or without a history.
+- `false` when there was nothing to do: `Carets::Collapse` and `Carets::RemoveLast` with one caret; the bracket and quote `Selection` commands with no target; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `AddPerLine` when no selection spans lines; `Transform::DuplicateSelection` and the case transforms without a selection to change; `Sort`, `Reverse`, `Unique`, `Join` and `TrimTrailingWhitespace` when the lines did not change; `Clip::PastePrevious` without an active paste or older entry; `Whitespace::NewLine` and every `Lines` command when the text did not change (`ToggleComment` also without a `comment` in the style); `UndoRedo` with nothing to undo or redo, or without a history; `Recall::Back` with no older entry and `Recall::Forward` when not browsing.
 - `false` for every command whose enum edits while the document refuses user edits.
 
 Notes on individual commands:
@@ -601,14 +603,28 @@ To examine text outside a document, build a line with `Textedit::Line.new(text, 
 
 ## Input recall
 
-`Recall` keeps the entries submitted from a single-line field and steps through them, remembering the draft:
+`Recollection` keeps the entries submitted from a single-line field and steps through them, remembering the draft:
 
 ```crystal
-past = Textedit::Recall.new(limit: 100)
+past = Textedit::Recollection.new(limit: 100)
 past.push("ls")
 past.back("dra")   # => "ls"
 past.forward       # => "dra"
 ```
+
+`Recalling` puts one behind a view, so recall is a command like any other. `Recall::Back` replaces the text with the previous entry and `Recall::Forward` with the next one, ending on the draft; each is one undo step, and the caret goes to the end. What Enter means stays with the host, which pushes the entry itself:
+
+```crystal
+prompt = Textedit::Field.new(graphemes)
+prompt.run(Textedit::Recall::Back)         # bound to Up, for example
+prompt.recollection.push(prompt.value)     # on Enter
+prompt.clear
+
+search = Textedit::Field.new(graphemes)
+search.recollection = prompt.recollection  # share the entries between fields
+```
+
+The recollection is made on first use, so a field that never recalls carries none.
 
 ## Macros
 

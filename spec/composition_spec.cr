@@ -11,7 +11,7 @@ end
 private class Everything < Textedit::View
   alias Command = Textedit::Motion | Textedit::Selection | Textedit::Carets | Textedit::Box | Textedit::Deletion |
                   Textedit::Whitespace | Textedit::Lines | Textedit::Transform | Textedit::Copy | Textedit::Clip |
-                  Textedit::UndoRedo
+                  Textedit::UndoRedo | Textedit::Recall
 
   include Textedit::Typing
   include Textedit::Deleting
@@ -29,6 +29,7 @@ private class Everything < Textedit::View
   include Textedit::Folding
   include Textedit::Snipping
   include Textedit::Recording(Command)
+  include Textedit::Recalling
 end
 
 private class Keeping
@@ -139,6 +140,9 @@ describe "composed views" do
     view.run(Textedit::UndoRedo::Undo).should be_true
     view.replay.should be_true
     view.macros.size.should eq(5)
+    view.recollection.push("again")
+    view.run(Textedit::Recall::Back).should be_true
+    view.value.should eq("again")
   end
 
   it "edits without a history and still knows when it was modified" do

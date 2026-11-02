@@ -1,7 +1,7 @@
 # src/textedit/presets.cr
 module Textedit
   class Field < View
-    alias Command = Motion | Selection | Deletion | Copy | Clip | UndoRedo
+    alias Command = Motion | Selection | Deletion | Copy | Clip | UndoRedo | Recall
 
     include Typing
     include Deleting
@@ -9,6 +9,7 @@ module Textedit
     include Copying
     include Pasting
     include Undoing
+    include Recalling
   end
 
   class Area < View
