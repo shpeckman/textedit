@@ -3,133 +3,79 @@ module Textedit
   class Document
     getter graphemes   : Graphemes
     getter buffer      : Buffer
-    getter history     : History
-    getter max_length  : Int32?
-    getter path        : String?
+    getter constraints : Array(Constraint)
     getter marks       : Array(Mark)
-    getter decorations : Array(Decoration)
-    getter annotations : Array(Annotation)
-    getter view        : View { View.new(self, layout: @seed_layout, copy_on_select: @seed_copy_on_select) }
+    getter views       : Array(View)
 
-    property filter       : Filter
-    property clipboard    : Clipboard
-    property selection_clipboard : Clipboard?
-    property line_ending  : LineEnding
-    property indent       : String
-    property comment      : String?
-    property tab_size     : Int32
-    property? auto_indent : Bool
-    property? auto_close  : Bool
-    property? copyable    : Bool
-    property? final_newline : Bool
-    property? read_only   : Bool
-
-    def views : Array(View)
-      view
-      @views
-    end
-
-    delegate carets, primary, primary_caret, cursor, box, layout, dragging?, copy_on_select?,
-      selection, selection?, selected_text, selected_texts, selected?, multiple?, run, move, move_carets,
-      select_range, select_all, select_word, select_line, place_carets, add_caret, collapse,
-      remove_last_caret, add_next_occurrence, skip_occurrence, select_all_occurrences, start_box,
-      select_box, clear_box, insert, paste, auto_copy, find, replace_match, replace_all, brackets,
-      to: view
-
-    def layout=(value : Layout) : Layout
-      view.layout = value
-    end
-
-    def dragging=(value : Bool) : Bool
-      view.dragging = value
-    end
-
-    def copy_on_select=(value : Bool) : Bool
-      view.copy_on_select = value
-    end
+    property filter      : Filter
+    property history     : History?
+    property style       : Style
+    property line_ending : LineEnding
 
     @listeners     : Array(Listener)
+    @followers     : Array(Follower)
     @depth         : Int32
     @batch         : Array(Change)
     @batch_before  : Array(Caret)
     @batch_primary : Int32
-    @batch_moved   : Bool
     @batch_view    : View?
+    @batch_origin  : Origin?
+    @stirred       : Array(View)
     @acting        : View?
-    @seed_layout   : Layout?
-    @seed_copy_on_select : Bool
+    @saved         : Int32
 
-    def initialize(@graphemes : Graphemes, text : String = "", *,
-                   @filter         : Filter    = SingleLine.new,
-                   @clipboard      : Clipboard = Register.new,
-                   @selection_clipboard : Clipboard? = nil,
-                   layout          : Layout?   = nil,
-                   @max_length     : Int32?    = nil,
-                   @indent         : String    = "  ",
-                   @comment        : String?   = nil,
-                   @tab_size       : Int32     = 4,
-                   @auto_indent    : Bool      = false,
-                   @auto_close     : Bool      = false,
-                   @copyable       : Bool      = true,
-                   @final_newline  : Bool      = false,
-                   copy_on_select  : Bool      = false,
-                   @read_only      : Bool      = false)
-      @line_ending = LineEnding.detect(text)
-      prepared     = @filter.filter(LineEnding.normalize(text))
-      if (max = @max_length) && (marks = @graphemes.boundaries(prepared)).size - 1 > max
-        prepared = prepared.byte_slice(0, marks[max])
+    def initialize(graphemes : Graphemes, text : String | Buffer = "", *,
+                   filter      : Filter   = SingleLine.new,
+                   history     : History? = History::Linear.new(graphemes),
+                   constraints : Array    = [] of Constraint,
+                   style       : Style    = Style.new)
+      @graphemes   = graphemes
+      @filter      = filter
+      @history     = history
+      @style       = style
+      @constraints = constraints.map(&.as(Constraint))
+
+      if text.is_a?(Buffer)
+        @line_ending = LineEnding.detect_in(text)
+        @buffer      = text
+      else
+        @line_ending = LineEnding.detect(text)
+        prepared     = filter.filter(LineEnding.normalize(text))
+        if (max = Constraint.capacity(@constraints)) && (marks = graphemes.boundaries(prepared)).size - 1 > max
+          prepared = prepared.byte_slice(0, marks[max])
+        end
+        @buffer = Buffer.new(graphemes, prepared)
       end
 
-      buffer         = Buffer.new(@graphemes, prepared)
-      @buffer        = buffer
-      @history       = History.new(@graphemes)
-      @path          = nil
       @marks         = [] of Mark
-      @decorations   = [] of Decoration
-      @annotations   = [] of Annotation
+      @views         = [] of View
       @listeners     = [] of Listener
+      @followers     = [] of Follower
       @depth         = 0
       @batch         = [] of Change
       @batch_before  = [] of Caret
       @batch_primary = 0
-      @batch_moved   = false
       @batch_view    = nil
+      @batch_origin  = nil
+      @stirred       = [] of View
       @acting        = nil
-      @views         = [] of View
-      @seed_layout   = layout
-      @seed_copy_on_select = copy_on_select
-      buffer.on_change { |change| applied(change) }
+      @saved         = @buffer.revision
+      @buffer.on_change { |change| applied(change) }
     end
 
-    protected def attach(view : View) : Nil
-      @views << view
+    def constraints=(list : Array) : Array(Constraint)
+      @constraints = list.map(&.as(Constraint))
+      max = capacity
+      self.value = value if max && length > max
+      @constraints
     end
 
-    protected def detach(view : View) : Nil
-      @views.delete(view)
+    def admits?(origin : Origin = Origin::User) : Bool
+      @constraints.all?(&.admits?(origin))
     end
 
-    protected def stirred(view : View) : Nil
-      if @depth > 0
-        @batch_moved = true
-      else
-        @listeners.dup.each(&.moved(view))
-      end
-    end
-
-    def self.open(graphemes : Graphemes, path : String, **options) : Document
-      buffer = Buffer.map(graphemes, path)
-      found  = new(graphemes, "", **options)
-      found.adopt(buffer, LineEnding.detect_in(buffer), path)
-      found
-    end
-
-    protected def adopt(buffer : Buffer, ending : LineEnding, path : String? = nil) : Nil
-      @buffer      = buffer
-      @line_ending = ending
-      @path        = path
-      views.each(&.rebind(buffer))
-      buffer.on_change { |change| applied(change) }
+    def capacity : Int32?
+      Constraint.capacity(@constraints)
     end
 
     def listen(listener : Listener) : Proc(Nil)
@@ -137,109 +83,42 @@ module Textedit
       -> { @listeners.delete(listener); nil }
     end
 
+    def track(follower : Follower) : Proc(Nil)
+      @followers << follower
+      -> { @followers.delete(follower); nil }
+    end
+
     def value : String
       @buffer.text
     end
 
-    def export : String
-      String.build(export_size) do |io|
-        each_export_chunk { |chunk| io.write(chunk) }
-      end
+    def value=(value : String) : String
+      assign(value, nil)
     end
 
-    def save(path : String? = nil) : Nil
-      target = path || @path || raise ArgumentError.new("save needs a path for a document without one")
-      size   = export_size
-      raise Mapped::Error.new("exported text is larger than this build can map") if size > Int32::MAX
-
-      temporary = File.tempfile(".#{File.basename(target)}", ".tmp", dir: File.dirname(target))
-      temp_path = temporary.path
-      begin
-        temporary.chmod(File.info(target).permissions) if File.exists?(target)
-        temporary.truncate(size)
-        temporary.close
-        Mapped.open(temp_path, writable: true) do |mapped|
-          bytes  = mapped.bytes
-          offset = 0
-          each_export_chunk do |chunk|
-            chunk.copy_to(bytes[offset, chunk.size])
-            offset += chunk.size
-          end
-        end
-        File.rename(temp_path, target)
-        @path = target
-        mark_saved
-      rescue error
-        temporary.close unless temporary.closed?
-        File.delete(temp_path) if File.exists?(temp_path)
-        raise error
-      end
-    end
-
-    private def export_size : Int64
-      breaks = @buffer.line_count.to_i64 - 1
-      size   = @buffer.bytesize.to_i64 + breaks * (@line_ending.sequence.bytesize - 1)
-      final_break? ? size + @line_ending.sequence.bytesize : size
-    end
-
-    private def each_export_chunk(& : Bytes -> Nil) : Nil
-      ending = @line_ending.sequence.to_slice
-      last   = @buffer.line_count - 1
-      @buffer.line_count.times do |index|
-        @buffer.line(index).each_chunk { |chunk, _start| yield chunk }
-        yield ending if index < last
-      end
-      yield ending if final_break?
-    end
-
-    private def final_break? : Bool
-      @final_newline && !@buffer.empty? && !(@buffer.line_count > 1 && @buffer.line(@buffer.line_count - 1).empty?)
+    def clear : Nil
+      self.value = ""
     end
 
     def length : Int32
       @buffer.size
     end
 
+    def revision : Int32
+      @buffer.revision
+    end
+
     def modified? : Bool
-      @history.modified?
+      if found = @history
+        found.modified?
+      else
+        @buffer.revision != @saved
+      end
     end
 
     def mark_saved : Nil
-      @history.mark_saved
-    end
-
-    def value=(value : String) : String
-      @line_ending = LineEnding.detect(value) if value.includes?('\n') || value.includes?('\r')
-      text = limit(prepare(value))
-
-      seat = self.view
-
-      if text == @buffer.text
-        seat.seat([Caret.at(length)], 0)
-        return self.value
-      end
-
-      before  = seat.carets
-      primary = seat.primary
-      @acting = seat
-      change  = @buffer.replace(0...length, text)
-      seat.seat([Caret.at(length)], 0)
-      record(History::Kind::Other, [change], before, primary, seat)
-      @acting = nil
-      changed([change])
-      self.value
-    end
-
-    def max_length=(value : Int32?) : Int32?
-      return value if @max_length == value
-
-      @max_length = value
-      self.value = self.value if value && length > value
-      value
-    end
-
-    def clear : Nil
-      self.value = ""
+      @history.try(&.mark_saved)
+      @saved = @buffer.revision
     end
 
     def mark(offset : Int32, gravity : Gravity = Gravity::Left) : Mark
@@ -250,54 +129,6 @@ module Textedit
 
     def unmark(mark : Mark) : Nil
       @marks.delete(mark)
-    end
-
-    def decorate(source : String, entries : Array(Decoration)) : Nil
-      @decorations.reject!(&.source.==(source))
-      entries.each do |entry|
-        entry.source = source
-        @decorations << entry
-      end
-      @decorations.sort_by!(&.start)
-      @listeners.dup.each(&.decorated(self))
-    end
-
-    def annotate(source : String, entries : Array(Annotation)) : Nil
-      @annotations.reject!(&.source.==(source))
-      entries.each do |entry|
-        entry.source = source
-        @annotations << entry
-      end
-      @annotations.sort_by!(&.offset)
-      @listeners.dup.each(&.annotated(self))
-    end
-
-    def annotations(from : Int32, to : Int32) : Array(Annotation)
-      @annotations.select { |entry| from <= entry.offset <= to }
-    end
-
-    def annotations_at(offset : Int32) : Array(Annotation)
-      @annotations.select(&.offset.==(offset))
-    end
-
-    def annotations_on(line : Int32) : Array(Annotation)
-      return [] of Annotation unless 0 <= line < @buffer.line_count
-
-      first = @buffer.line_start(line)
-      last  = @buffer.line_end(line)
-      @annotations.select { |entry| first <= entry.offset <= last }
-    end
-
-    def decorations(from : Int32, to : Int32) : Array(Decoration)
-      @decorations.select(&.overlaps?(from, to))
-    end
-
-    def decorations_at(offset : Int32) : Array(Decoration)
-      @decorations.select(&.covers?(offset))
-    end
-
-    def revision : Int32
-      @buffer.revision
     end
 
     def map(offset : Int32, from : Int32, gravity : Gravity = Gravity::Left) : Int32?
@@ -313,14 +144,15 @@ module Textedit
       start...Math.max(stop, start)
     end
 
-    def transaction(& : -> T) : T forall T
+    def transaction(view : View? = nil, & : -> T) : T forall T
       outer = @depth == 0
       if outer
         @batch         = [] of Change
-        @batch_before  = view.carets
-        @batch_primary = view.primary
-        @batch_moved   = false
-        @batch_view    = nil
+        @batch_before  = view.try(&.carets) || [] of Caret
+        @batch_primary = view.try(&.primary) || 0
+        @batch_view    = view
+        @batch_origin  = nil
+        @stirred       = [] of View
       end
 
       @depth += 1
@@ -332,36 +164,18 @@ module Textedit
       end
     end
 
-    def undo(view : View = self.view) : Bool
-      return false if @depth > 0
-
-      @acting = view
-      step, applied = @history.undo(@buffer) || begin
-        @acting = nil
-        return false
-      end
-      view.seat(step.before, step.before_primary)
-      @acting = nil
-      changed(applied)
-      true
+    def undo(view : View? = nil) : Bool
+      revert(view, Origin::Undo)
     end
 
-    def redo(view : View = self.view) : Bool
-      return false if @depth > 0
-
-      @acting = view
-      step, applied = @history.redo(@buffer) || begin
-        @acting = nil
-        return false
-      end
-      view.seat(step.after, step.after_primary)
-      @acting = nil
-      changed(applied)
-      true
+    def redo(view : View? = nil) : Bool
+      revert(view, Origin::Redo)
     end
 
-    def replace_ranges(edits : Array(Edit), kind : History::Kind = History::Kind::Other,
-                       after : Array(Caret)? = nil, *, view : View = self.view) : Bool
+    def replace_ranges(edits : Array(Edit), gesture : Gesture = Gesture::Other, after : Array(Caret)? = nil, *,
+                       view : View? = nil, origin : Origin = Origin::Code) : Bool
+      return false unless admits?(origin)
+
       ordered = edits.sort_by { |edit| {edit.range.begin, edit.range.end} }
       floor   = 0
       kept    = [] of Edit
@@ -375,31 +189,32 @@ module Textedit
 
       return false if kept.empty?
 
-      before  = view.carets
-      primary = view.primary
+      before  = view.try(&.carets) || [] of Caret
+      primary = view.try(&.primary) || 0
       sizes   = kept.map { |edit| {edit.range, count(edit.text)} }
       applied = [] of Change
       @acting = view
       kept.reverse_each { |edit| applied << @buffer.replace(edit.range, edit.text) }
 
-      after ||= before.map { |caret| Caret.new(carry(caret.anchor, sizes), carry(caret.head, sizes)) }
-
-      view.seat(after, primary)
-      record(kind, applied, before, primary, view)
+      if view
+        after ||= before.map { |caret| Caret.new(carry(caret.anchor, sizes), carry(caret.head, sizes)) }
+        view.seat(after, primary)
+      end
+      record(gesture, origin, applied, before, primary, view)
       @acting = nil
       changed(applied)
       true
     end
 
-    protected def apply(view : View, kind : History::Kind, & : Caret, Int32 -> Stroke?) : Bool
-      return false if @read_only
+    protected def apply(view : View, gesture : Gesture, & : Caret, Int32 -> Stroke?) : Bool
+      return false unless admits?(Origin::User)
 
       before  = view.carets
       primary = view.primary
       strokes = Array(Stroke?).new(before.size)
       before.each_with_index { |caret, index| strokes << yield(caret, index) }
 
-      room  = @max_length.try { |max| max - length + strokes.sum { |stroke| stroke ? stroke.range.size : 0 } }
+      room  = capacity.try { |max| max - length + strokes.sum { |stroke| stroke ? stroke.range.size : 0 } }
       floor = 0
 
       strokes.map! do |stroke|
@@ -452,19 +267,84 @@ module Textedit
       end
 
       view.seat(after, primary)
-      record(kind, applied, before, primary, view)
+      record(gesture, Origin::User, applied, before, primary, view)
       @acting = nil
       changed(applied)
       true
     end
 
-    private def record(kind : History::Kind, changes : Array(Change), before : Array(Caret),
-                       primary : Int32, view : View) : Nil
+    protected def assign(value : String, view : View?) : String
+      @line_ending = LineEnding.detect(value) if value.includes?('\n') || value.includes?('\r')
+      text = limit(prepare(value))
+
+      if text == @buffer.text
+        view.try(&.seat([Caret.at(length)], 0))
+        return self.value
+      end
+
+      before  = view.try(&.carets) || [] of Caret
+      primary = view.try(&.primary) || 0
+      @acting = view
+      change  = @buffer.replace(0...length, text)
+      view.try(&.seat([Caret.at(length)], 0))
+      record(Gesture::Other, Origin::Code, [change], before, primary, view)
+      @acting = nil
+      changed([change])
+      self.value
+    end
+
+    protected def attach(view : View) : Nil
+      @views << view
+    end
+
+    protected def detach(view : View) : Nil
+      @views.delete(view)
+    end
+
+    protected def stirred(view : View) : Nil
+      if @depth > 0
+        @stirred << view unless @stirred.any?(&.same?(view))
+      else
+        @listeners.dup.each(&.moved(view))
+      end
+    end
+
+    protected def prepare(text : String) : String
+      @filter.filter(LineEnding.normalize(text))
+    end
+
+    protected def count(text : String) : Int32
+      text.empty? ? 0 : @graphemes.boundaries(text).size - 1
+    end
+
+    private def revert(view : View?, origin : Origin) : Bool
+      return false if @depth > 0 || !admits?(origin)
+
+      history = @history || return false
+      restore = (origin.undo? ? history.undo : history.redo) || return false
+      before  = view.try(&.carets) || [] of Caret
+      primary = view.try(&.primary) || 0
+      seated  = restore.carets.empty? ? nil : view
+
+      @acting = seated
+      applied = restore.edits.map { |edit| @buffer.replace(edit.range, edit.text) }
+      seated.try(&.seat(restore.carets, restore.primary))
+      @acting = nil
+      history.record(Commit.new(Gesture::Other, origin, applied, before, primary,
+        view.try(&.carets) || [] of Caret, view.try(&.primary) || 0))
+      changed(applied)
+      true
+    end
+
+    private def record(gesture : Gesture, origin : Origin, changes : Array(Change), before : Array(Caret),
+                       primary : Int32, view : View?) : Nil
       if @depth > 0
         @batch.concat(changes)
-        @batch_view ||= view
+        @batch_view   ||= view
+        @batch_origin ||= origin
       else
-        @history.record(kind, changes, before, primary, view.carets, view.primary)
+        @history.try(&.record(Commit.new(gesture, origin, changes, before, primary,
+          view.try(&.carets) || [] of Caret, view.try(&.primary) || 0)))
       end
     end
 
@@ -474,19 +354,25 @@ module Textedit
 
     private def finish : Nil
       batch       = @batch
-      acting      = @batch_view || self.view
+      acting      = @batch_view
+      origin      = @batch_origin || Origin::Code
+      stirred     = @stirred
       @batch      = [] of Change
       @batch_view = nil
-      @history.record(History::Kind::Other, batch, @batch_before, @batch_primary, acting.carets, acting.primary) unless batch.empty?
-      @listeners.dup.each(&.moved(acting)) if @batch_moved
-      @batch_moved = false
+      @stirred    = [] of View
+      @batch_origin = nil
+
+      unless batch.empty?
+        @history.try(&.record(Commit.new(Gesture::Other, origin, batch, @batch_before, @batch_primary,
+          acting.try(&.carets) || [] of Caret, acting.try(&.primary) || 0)))
+      end
+      stirred.each { |view| @listeners.dup.each(&.moved(view)) }
       @listeners.dup.each(&.edited(self, batch)) unless batch.empty?
     end
 
     private def applied(change : Change) : Nil
       @marks.each(&.follow(change))
-      @decorations.each(&.follow(change))
-      @annotations.each(&.follow(change))
+      @followers.each(&.follow(change))
       acting = @acting
       @views.each { |view| view.follow(change) unless acting && view.same?(acting) }
       @listeners.dup.each(&.applied(self, change))
@@ -503,20 +389,12 @@ module Textedit
       offset + delta
     end
 
-    protected def prepare(text : String) : String
-      @filter.filter(LineEnding.normalize(text))
-    end
-
-    protected def count(text : String) : Int32
-      text.empty? ? 0 : @graphemes.boundaries(text).size - 1
-    end
-
     private def take(text : String, clusters : Int32) : String
       text.byte_slice(0, @graphemes.boundaries(text)[clusters])
     end
 
     private def limit(text : String) : String
-      max = @max_length
+      max = capacity
       max && count(text) > max ? take(text, max) : text
     end
   end

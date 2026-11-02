@@ -1,14 +1,12 @@
 # src/textedit/macro_log.cr
 module Textedit
-  class MacroLog
-    alias Entry = Command | String
-
-    getter entries : Array(Entry)
+  class MacroLog(C)
+    getter entries : Array(C | String)
     getter? recording : Bool
     getter? replaying : Bool
 
     def initialize
-      @entries   = [] of Entry
+      @entries   = Array(C | String).new
       @recording = false
       @replaying = false
     end
@@ -16,7 +14,7 @@ module Textedit
     def record : Nil
       return if @replaying
 
-      @entries   = [] of Entry
+      @entries   = Array(C | String).new
       @recording = true
     end
 
@@ -32,29 +30,14 @@ module Textedit
       @entries.size
     end
 
-    def push(entry : Entry) : Nil
+    def push(entry : C | String) : Nil
       return unless @recording && !@replaying
 
       @entries << entry
     end
 
-    def replay(view : View, times : Int32 = 1) : Bool
-      return false if @entries.empty? || @replaying
-
-      @replaying = true
-      applied    = false
-      begin
-        times.times do
-          view.document.transaction do
-            @entries.each do |entry|
-              applied = (entry.is_a?(Command) ? view.run(entry) : view.insert(entry)) || applied
-            end
-          end
-        end
-      ensure
-        @replaying = false
-      end
-      applied
+    protected def replaying=(value : Bool) : Bool
+      @replaying = value
     end
   end
 end

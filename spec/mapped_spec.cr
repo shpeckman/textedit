@@ -66,28 +66,33 @@ describe "Textedit::Buffer.split over bytes" do
   end
 end
 
-describe "Textedit::Document.open" do
+private def opened(path : String, **options) : {Textedit::Storage, Textedit::Editor}
+  storage = Textedit::Storage.open(GRAPHEMES, path, **{filter: Textedit::MultiLine.new}.merge(options))
+  {storage, Textedit::Editor.new(storage.document)}
+end
+
+describe "Textedit::Storage.open" do
   after_each { FileUtils.rm_rf(WORK) }
 
   it "builds a document from a mapped file" do
-    path = written("c.cr", "def run\n  1\nend")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    path          = written("c.cr", "def run\n  1\nend")
+    storage, text = opened(path)
 
     text.value.should eq("def run\n  1\nend")
-    text.path.should eq(path)
+    storage.path.should eq(path)
     text.buffer.mapped?.should be_true
     text.buffer.line_count.should eq(3)
     text.buffer.line(1).text.should eq("  1")
     text.buffer.line(1).mapped?.should be_true
-    text.cursor.should eq(0)
+    text.cursor.should eq(15)
     text.length.should eq(15)
   end
 
   it "keeps unchanged lines mapped through edits and undo" do
-    path = written("cow.cr", "alpha\nbeta\ngamma")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    path    = written("cow.cr", "alpha\nbeta\ngamma")
+    _, text = opened(path)
 
-    text.run(Textedit::Command::DocumentEnd)
+    text.run(Textedit::Motion::DocumentEnd)
     text.move(8)
     text.insert("!")
     text.value.should eq("alpha\nbe!ta\ngamma")
@@ -102,9 +107,9 @@ describe "Textedit::Document.open" do
   end
 
   it "reads chunks and literal matches without materializing a line" do
-    path = written("lazy.txt", "alpha\nbeta")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
-    row  = text.buffer.line(1)
+    path    = written("lazy.txt", "alpha\nbeta")
+    _, text = opened(path)
+    row     = text.buffer.line(1)
 
     row.@text.should be_nil
     text.buffer.chunk(6).should eq("beta".to_slice)
@@ -116,9 +121,9 @@ describe "Textedit::Document.open" do
   end
 
   it "indexes and reads non-ASCII mapped lines without caching their text" do
-    path = written("unicode.txt", "é👍\n日本")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
-    row  = text.buffer.line(0)
+    path    = written("unicode.txt", "é👍\n日本")
+    _, text = opened(path)
+    row     = text.buffer.line(0)
 
     row.@text.should be_nil
     row.size.should eq(2)
@@ -128,10 +133,10 @@ describe "Textedit::Document.open" do
   end
 
   it "stays editable, undoable and searchable" do
-    path = written("d.cr", "alpha\nbeta")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    path    = written("d.cr", "alpha\nbeta")
+    _, text = opened(path)
 
-    text.run(Textedit::Command::DocumentEnd)
+    text.run(Textedit::Motion::DocumentEnd)
     text.insert("!")
     text.value.should eq("alpha\nbeta!")
     text.undo
@@ -140,23 +145,23 @@ describe "Textedit::Document.open" do
   end
 
   it "keeps a CRLF file's ending for export" do
-    path = written("e.txt", "one\r\ntwo")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
-    text.line_ending.should eq(Textedit::LineEnding::CRLF)
+    path       = written("e.txt", "one\r\ntwo")
+    storage, _ = opened(path)
+    storage.document.line_ending.should eq(Textedit::LineEnding::CRLF)
   end
 
   it "opens an empty file" do
-    path = written("f.txt", "")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    path    = written("f.txt", "")
+    _, text = opened(path)
     text.value.should eq("")
     text.buffer.line_count.should eq(1)
     text.buffer.line(0).mapped?.should be_true
   end
 
   it "serves every line of a large file" do
-    body = Array.new(20_000) { |index| "line #{index}" }.join('\n')
-    path = written("big.txt", body)
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    body    = Array.new(20_000) { |index| "line #{index}" }.join('\n')
+    path    = written("big.txt", body)
+    _, text = opened(path)
 
     text.buffer.line_count.should eq(20_000)
     text.buffer.line(0).text.should eq("line 0")
@@ -166,9 +171,9 @@ describe "Textedit::Document.open" do
   end
 
   it "chunks long mapped lines and saves edited pieces" do
-    body = "a" * (Textedit::Line::CHUNK * 2) + "bc\ntail"
-    path = written("long-line.txt", body)
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    body          = "a" * (Textedit::Line::CHUNK * 2) + "bc\ntail"
+    path          = written("long-line.txt", body)
+    storage, text = opened(path)
     text.buffer.line(0).chunked?.should be_true
     text.buffer.line(0).mapped?.should be_true
 
@@ -177,45 +182,70 @@ describe "Textedit::Document.open" do
     text.buffer.line(0).mapped?.should be_false
     text.buffer.line(1).mapped?.should be_true
     expected = body[0, 10] + "X" + body[10..]
-    text.export.should eq(expected)
-    text.save
+    storage.export.should eq(expected)
+    storage.save
     File.read(path).should eq(expected)
   end
 end
 
-describe "Textedit::Document#save" do
+describe Textedit::Storage do
   after_each { FileUtils.rm_rf(WORK) }
 
+  it "exports the document's own line ending" do
+    text = lines("a\r\nb\r\n")
+    Textedit::Storage.new(text.document).export.should eq("a\r\nb\r\n")
+    text.value = "x\ny"
+    text.document.line_ending = Textedit::LineEnding::CR
+    Textedit::Storage.new(text.document).export.should eq("x\ry")
+  end
+
+  it "adds one line ending on export with final_newline, without touching the text" do
+    text    = lines("a\nb")
+    storage = Textedit::Storage.new(text.document, final_newline: true)
+    text.value.should eq("a\nb")
+    storage.export.should eq("a\nb\n")
+
+    storage.final_newline = false
+    storage.export.should eq("a\nb")
+  end
+
+  it "leaves an empty document and an already-terminated one alone" do
+    Textedit::Storage.new(lines("").document, final_newline: true).export.should eq("")
+    Textedit::Storage.new(lines("a\n").document, final_newline: true).export.should eq("a\n")
+    Textedit::Storage.new(lines("a\r\nb").document, final_newline: true).export.should eq("a\r\nb\r\n")
+  end
+
   it "saves to an explicit path, marks the save point, and reloads" do
-    text = lines("a\nb")
+    text    = lines("a\nb")
+    storage = Textedit::Storage.new(text.document)
     text.insert("!")
-    expect_raises(ArgumentError) { text.save }
+    expect_raises(ArgumentError) { storage.save }
     Dir.mkdir_p(WORK)
     path = File.join(WORK, "new.txt")
-    text.save(path)
+    storage.save(path)
 
     File.read(path).should eq("a\nb!")
-    text.path.should eq(path)
-    text.modified?.should be_false
-    reopened = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
-    reopened.value.should eq("a\nb!")
+    storage.path.should eq(path)
+    text.document.modified?.should be_false
+    reopened = Textedit::Storage.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    reopened.document.value.should eq("a\nb!")
     text.undo
     text.value.should eq("a\nb")
-    text.modified?.should be_true
+    text.document.modified?.should be_true
   end
 
   it "saves a mapped document back to the same file after growth and shrinkage" do
-    path = written("same.txt", "one\ntwo\nthree")
-    text = Textedit::Document.open(GRAPHEMES, path, filter: Textedit::MultiLine.new)
+    path          = written("same.txt", "one\ntwo\nthree")
+    storage, text = opened(path)
     text.replace_ranges([Textedit::Edit.new(3...3, "long")])
-    text.save
+    storage.save
 
     File.read(path).should eq("onelong\ntwo\nthree")
-    text.path.should eq(path)
-    text.modified?.should be_false
+    storage.path.should eq(path)
+    text.document.modified?.should be_false
     text.buffer.line(1).mapped?.should be_true
     text.value = "x"
-    text.save
+    storage.save
     File.read(path).should eq("x")
     text.value.should eq("x")
     text.undo
@@ -223,14 +253,11 @@ describe "Textedit::Document#save" do
   end
 
   it "writes exact LF, CRLF and CR output with a final newline" do
+    Dir.mkdir_p(WORK)
     {Textedit::LineEnding::LF, Textedit::LineEnding::CRLF, Textedit::LineEnding::CR}.each do |ending|
-      text = lines("a\nb", final_newline: true)
-      text.line_ending = ending
-      Dir.mkdir_p(WORK)
-      Dir.mkdir_p(WORK)
-    path = File.join(WORK, "#{ending.value}.txt")
-      text.save(path)
-      File.read(path).should eq(lines("a\nb", final_newline: true).tap { |other| other.line_ending = ending }.export)
+      storage = Textedit::Storage.new(lines("a\nb").document, final_newline: true)
+      storage.document.line_ending = ending
+      storage.save(File.join(WORK, "#{ending.value}.txt"))
     end
     File.read(File.join(WORK, "0.txt")).should eq("a\nb\n")
     File.read(File.join(WORK, "1.txt")).should eq("a\r\nb\r\n")
@@ -238,31 +265,46 @@ describe "Textedit::Document#save" do
   end
 
   it "saves an empty document as an empty file" do
-    text = lines("", final_newline: true)
+    storage = Textedit::Storage.new(lines("").document, final_newline: true)
     Dir.mkdir_p(WORK)
     path = File.join(WORK, "empty-save.txt")
-    text.save(path)
+    storage.save(path)
     File.read(path).should eq("")
   end
 
   it "preserves permissions when replacing a file" do
     path = written("permissions.txt", "old")
     File.chmod(path, 0o640)
-    text = Textedit::Document.open(GRAPHEMES, path)
+    storage = Textedit::Storage.open(GRAPHEMES, path)
+    text    = Textedit::Field.new(storage.document)
+    text.move(0)
     text.insert("new")
-    text.save
+    storage.save
     File.info(path).permissions.value.should eq(0o640)
     File.read(path).should eq("newold")
+  end
+
+  it "tracks the save point without a history" do
+    path    = written("plain.txt", "old")
+    storage = Textedit::Storage.open(GRAPHEMES, path, history: nil)
+    text    = Textedit::Field.new(storage.document)
+    storage.document.modified?.should be_false
+    text.insert("!")
+    storage.document.modified?.should be_true
+    storage.save
+    storage.document.modified?.should be_false
+    text.undo.should be_false
   end
 
   it "cleans up a failed save without changing the document" do
     target = File.join(WORK, "directory")
     Dir.mkdir_p(target)
-    text = lines("changed")
+    text    = lines("changed")
+    storage = Textedit::Storage.new(text.document)
     text.insert("!")
-    expect_raises(File::Error) { text.save(target) }
-    text.modified?.should be_true
-    text.path.should be_nil
+    expect_raises(File::Error) { storage.save(target) }
+    text.document.modified?.should be_true
+    storage.path.should be_nil
     Dir.children(WORK).should eq(["directory"])
   end
 end

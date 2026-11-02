@@ -29,6 +29,21 @@ module Textedit
     Right
   end
 
+  enum Gesture
+    Typing
+    Deleting
+    Other
+  end
+
+  enum Origin
+    User
+    Code
+    Undo
+    Redo
+  end
+
+  record Style, indent : String = "  ", tab_size : Int32 = 4, comment : String? = nil
+
   enum LineEnding
     LF
     CRLF

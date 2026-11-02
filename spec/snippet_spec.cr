@@ -36,7 +36,7 @@ describe Textedit::Snippet do
 
   it "inserts the text and selects the first stop" do
     text    = lines("")
-    snippet = text.view.insert_snippet("def ${1:name}($2)\n  $0\nend").not_nil!
+    snippet = text.insert_snippet("def ${1:name}($2)\n  $0\nend").not_nil!
 
     text.value.should eq("def name()\n  \nend")
     text.selection.should eq(4...8)
@@ -47,32 +47,32 @@ describe Textedit::Snippet do
 
   it "steps through the stops and finishes at the final one" do
     text    = lines("")
-    snippet = text.view.insert_snippet("${1:a}-${2:b}-$0").not_nil!
+    snippet = text.insert_snippet("${1:a}-${2:b}-$0").not_nil!
 
     text.selected_text.should eq("a")
-    snippet.next_stop(text.view).should be_true
+    snippet.next_stop(text).should be_true
     text.selected_text.should eq("b")
-    snippet.next_stop(text.view).should be_true
+    snippet.next_stop(text).should be_true
     text.cursor.should eq(4)
     text.selection?.should be_false
-    snippet.next_stop(text.view).should be_false
+    snippet.next_stop(text).should be_false
     snippet.active?.should be_false
   end
 
   it "steps backwards" do
     text    = lines("")
-    snippet = text.view.insert_snippet("${1:a}-${2:b}").not_nil!
+    snippet = text.insert_snippet("${1:a}-${2:b}").not_nil!
 
-    snippet.next_stop(text.view)
+    snippet.next_stop(text)
     text.selected_text.should eq("b")
-    snippet.previous_stop(text.view).should be_true
+    snippet.previous_stop(text).should be_true
     text.selected_text.should eq("a")
-    snippet.previous_stop(text.view).should be_false
+    snippet.previous_stop(text).should be_false
   end
 
   it "puts a caret on every mirror of a stop so typing fills them together" do
     text    = lines("")
-    snippet = text.view.insert_snippet("$1 = $1 + 1").not_nil!
+    snippet = text.insert_snippet("$1 = $1 + 1").not_nil!
 
     text.carets.size.should eq(2)
     text.insert("count")
@@ -82,18 +82,18 @@ describe Textedit::Snippet do
 
   it "follows the stops through edits made at an earlier stop" do
     text    = lines("")
-    snippet = text.view.insert_snippet("${1:a}(${2:b})").not_nil!
+    snippet = text.insert_snippet("${1:a}(${2:b})").not_nil!
 
     text.insert("longer")
     text.value.should eq("longer(b)")
-    snippet.next_stop(text.view).should be_true
+    snippet.next_stop(text).should be_true
     text.selected_text.should eq("b")
   end
 
   it "replaces the selection it is inserted over, as one undo step" do
     text = lines("old")
     text.select_all
-    text.view.insert_snippet("${1:new}").not_nil!
+    text.insert_snippet("${1:new}").not_nil!
     text.value.should eq("new")
 
     text.undo
@@ -102,17 +102,17 @@ describe Textedit::Snippet do
 
   it "returns nil for a snippet with no stops and still inserts it" do
     text = lines("")
-    text.view.insert_snippet("plain text").should be_nil
+    text.insert_snippet("plain text").should be_nil
     text.value.should eq("plain text")
   end
 
   it "drops its marks when closed" do
     text    = lines("")
-    snippet = text.view.insert_snippet("${1:a}${2:b}").not_nil!
-    text.marks.size.should eq(4)
+    snippet = text.insert_snippet("${1:a}${2:b}").not_nil!
+    text.document.marks.size.should eq(4)
 
     snippet.close
-    text.marks.should be_empty
+    text.document.marks.should be_empty
     snippet.active?.should be_false
   end
 end

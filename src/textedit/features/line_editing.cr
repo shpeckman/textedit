@@ -1,11 +1,48 @@
-# src/textedit/view/lines.cr
+# src/textedit/features/line_editing.cr
 module Textedit
-  class View
-    private def indent_lines : Bool
-      edits = blocks.flat_map do |(first, last)|
-        (first..last).map { |line| Edit.new(@buffer.line_start(line)...@buffer.line_start(line), @document.indent) }
+  enum Lines
+    Indent
+    Outdent
+    ToggleComment
+    MoveUp
+    MoveDown
+    Duplicate
+    Delete
+
+    def edits? : Bool
+      true
+    end
+  end
+
+  module LineEditing
+    def run(command : Lines, selecting : Bool = false) : Bool
+      return false unless enter(command)
+
+      case command
+      in .indent?         then indent_lines
+      in .outdent?        then outdent_lines
+      in .toggle_comment? then toggle_comment
+      in .move_up?        then move_lines(-1)
+      in .move_down?      then move_lines(1)
+      in .duplicate?      then duplicate_lines
+      in .delete?         then delete_lines
       end
-      replace_ranges(edits)
+    end
+
+    private def tab : Bool
+      if @carets.any? { |caret| @buffer.position(caret.start).line != @buffer.position(caret.stop).line }
+        indent_lines
+      else
+        super
+      end
+    end
+
+    private def indent_lines : Bool
+      indent = @document.style.indent
+      edits  = blocks.flat_map do |(first, last)|
+        (first..last).map { |line| Edit.new(@buffer.line_start(line)...@buffer.line_start(line), indent) }
+      end
+      revise(edits)
     end
 
     private def outdent_lines : Bool
@@ -17,14 +54,16 @@ module Textedit
           edits << Edit.new(start...(start + size), "") if size > 0
         end
       end
-      replace_ranges(edits)
+      revise(edits)
     end
 
     private def outdent_size(line : Line) : Int32
-      return count(@document.indent) if !@document.indent.empty? && line.starts_with?(@document.indent)
+      style  = @document.style
+      indent = style.indent
+      return count(indent) if !indent.empty? && line.starts_with?(indent)
       return 1 if !line.empty? && line.char(0) == '\t'
 
-      limit = @document.indent.includes?('\t') ? @document.tab_size : count(@document.indent)
+      limit = indent.includes?('\t') ? style.tab_size : count(indent)
       size  = 0
       while size < limit && size < line.size && line.char(size) == ' '
         size += 1
@@ -33,7 +72,7 @@ module Textedit
     end
 
     private def toggle_comment : Bool
-      prefix  = @document.comment || return false
+      prefix  = @document.style.comment || return false
       lines   = blocks.flat_map { |(first, last)| (first..last).to_a }
       targets = lines.reject { |line| @buffer.blank?(line) }
       return false if targets.empty?
@@ -59,7 +98,7 @@ module Textedit
           end
         end
 
-      replace_ranges(edits)
+      revise(edits)
     end
 
     private def move_lines(step : Int32) : Bool
@@ -84,7 +123,7 @@ module Textedit
         end
       end
 
-      replace_ranges(edits, after: @carets.map { |caret| Caret.new(shift_by(caret.anchor, shifts), shift_by(caret.head, shifts)) })
+      revise(edits, @carets.map { |caret| Caret.new(shift_by(caret.anchor, shifts), shift_by(caret.head, shifts)) })
     end
 
     private def duplicate_lines : Bool
@@ -100,10 +139,7 @@ module Textedit
         total += (stop - start) + 1
       end
 
-      after = @carets.map do |caret|
-        Caret.new(shift_by(caret.anchor, shifts), shift_by(caret.head, shifts))
-      end
-      replace_ranges(edits, after: after)
+      revise(edits, @carets.map { |caret| Caret.new(shift_by(caret.anchor, shifts), shift_by(caret.head, shifts)) })
     end
 
     private def delete_lines : Bool
@@ -117,26 +153,7 @@ module Textedit
         end
         Edit.new(start...stop, "")
       end
-      replace_ranges(edits)
-    end
-
-    private def blocks : Array({Int32, Int32})
-      spans = [] of {Int32, Int32}
-
-      @carets.each do |caret|
-        first = @buffer.position(caret.start).line
-        stop  = @buffer.position(caret.stop)
-        last  = stop.line
-        last -= 1 if last > first && stop.column == 0 && !caret.empty?
-
-        if (previous = spans.last?) && first <= previous[1] + 1
-          spans[-1] = {previous[0], Math.max(previous[1], last)}
-        else
-          spans << {first, last}
-        end
-      end
-
-      spans
+      revise(edits)
     end
 
     private def shift_by(offset : Int32, shifts : Array({Int32, Int32, Int32})) : Int32

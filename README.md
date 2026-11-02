@@ -1,8 +1,8 @@
 # textedit
 
-A multi-caret text editing model for Crystal.
+A multi-caret text editing model for Crystal, built from features you compose.
 
-textedit holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and subword motion, multiple carets, box selection, clipboard, line operations and transforms, comments, auto-closing brackets, snippets with tabstops, folding, and find and replace. One document can carry several views, each with its own carets and layout. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the Tree-sitter highlighter in [asekii-editor](https://github.com/shpeckman/asekii-editor). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
+textedit holds the text, the carets and the undo history, and carries out editing commands: typing, deleting, word and subword motion, multiple carets, box selection, clipboard, line operations and transforms, comments, auto-closing brackets, snippets with tabstops, folding, and find and replace. Each of those is a feature module, so a single-line field, a read-only viewer and a code editor each carry only what they use. History, read-only and length limits, decorations, annotations and file storage are separate, swappable services. One document can carry several views, each with its own carets, layout and features. It draws nothing, reads no input and highlights nothing: syntax tokens come from a host-supplied `TokenSource`, such as the Tree-sitter highlighter in [asekii-editor](https://github.com/shpeckman/asekii-editor). The host — a terminal UI, a GUI, a test — implements a few small interfaces, sends commands, and listens for changes.
 
 It has no dependencies beyond the standard library.
 
@@ -55,93 +55,183 @@ struct Clusters
   end
 end
 
-text = Textedit::Document.new(Clusters.new, "hello world", filter: Textedit::MultiLine.new)
-text.run(Textedit::Command::WordLeft)
+text = Textedit::Editor.new(Clusters.new, "hello world")
+text.run(Textedit::Motion::WordLeft)
 text.insert("big ")
 text.value # => "hello big world"
 text.undo
 text.value # => "hello world"
 ```
 
-## Documents and views
+## Composition
 
-A `Document` owns the text, the undo `History`, the marks, the decorations and the annotations. A `View` owns the carets, the goal column, the box selection and the `Layout`, and carries out every command. A document has one view from the start, and `Document` delegates the whole caret and editing API to it, so a single-view host never mentions `View` at all.
+Three things make up an editing widget:
+
+- A `Document` holds the text and the services that act on every edit: the `History`, the `Constraint`s, the `Filter`, the `Style`, the marks and the listeners.
+- A `View` holds the carets, the goal column and the `Layout`, and carries out motion. Everything else a view can do comes from the feature modules it includes.
+- Each feature module brings its own command enum, its state and its methods.
+
+### Presets
+
+Four ready-made views cover the common widgets. Each one declares its command union as `Command`, which is also the type for a host keymap.
+
+| Preset | Features | Document defaults |
+| --- | --- | --- |
+| `Field` | `Typing`, `Deleting`, `Selecting`, `Copying`, `Pasting`, `Undoing` | `SingleLine` filter, `History::Linear` |
+| `Area` | `Field`'s, plus `Spacing` and `Multicaret` | `MultiLine` filter, `History::Linear` |
+| `Reader` | `Selecting`, `Multicaret`, `Copying`, `Finding`, `Folding` | `MultiLine` filter, no history |
+| `Editor` | every feature | `MultiLine` filter, `History::Linear` |
 
 ```crystal
-text  = Textedit::Document.new(graphemes, "one two", filter: Textedit::MultiLine.new)
-text.insert("x")             # goes to text.view
-other = Textedit::View.new(text)
-other.select_range(0, 3)     # its own carets, its own layout
-text.views.size              # => 2
-other.close                  # stops following the document
+name   = Textedit::Field.new(graphemes, "hello", constraints: [Textedit::MaxLength.new(40)])
+notes  = Textedit::Area.new(graphemes)
+viewer = Textedit::Reader.new(graphemes, log_text)
+editor = Textedit::Editor.new(graphemes, source, style: Textedit::Style.new(indent: "\t", comment: "#"))
 ```
 
-Two views share the text and the history: an edit from either one shows in both, the other's carets are carried through it as marks are, and `undo` from either one seats the carets it recorded. `view.layout = …` is per view, so two panes can wrap the same document at different widths.
+`View.new(graphemes, text, **options)` builds the view's own document; the options go to `Document.new` and override the preset's defaults. `View.new(document)` attaches a view to an existing document instead. A view starts with one caret at the end of the text.
 
-Offsets everywhere count grapheme clusters, not bytes or characters; a line break counts as one cluster.
+Settings that belong to a feature are properties of the view, set after construction:
 
 ```crystal
-text = Textedit::Document.new(graphemes, "one two", max_length: 80, copy_on_select: true)
+editor.auto_close     = true
+editor.auto_indent    = true
+editor.clipboard      = system_clipboard
+editor.copy_on_select = true
+```
 
-text.value                 # the text, with \n line breaks
-text.value = "replaced"    # undoable; the caret moves to the end
-text.cursor                # the head of the primary caret
-text.carets                # Array(Textedit::Caret), sorted and merged
-text.select_range(0, 3)
-text.selected_text
-text.place_carets([Textedit::Caret.at(0), Textedit::Caret.at(4)])
-text.insert("x")           # typed text, at every caret
-text.paste("a\nb")         # one line per caret when the counts match
-text.undo
-text.redo
+### Building a widget
+
+Subclass `View`, include the features, and name the command union:
+
+```crystal
+class Pin < Textedit::View
+  alias Command = Textedit::Motion | Textedit::Deletion
+
+  include Textedit::Typing
+  include Textedit::Deleting
+end
+
+pin = Pin.new(graphemes, filter: Digits.new, history: nil, constraints: [Textedit::MaxLength.new(6)])
+pin.insert("12a3")
+pin.value                      # => "123"
+pin.run(Textedit::Clip::Paste) # compile error: Pin has no Pasting
+```
+
+A command a view lacks is a compile error, not a `false` at run time. A preset can be the base class too, for example `class Console < Textedit::Field` with `include Textedit::Finding`.
+
+| Feature | Commands | Adds | Needs |
+| --- | --- | --- | --- |
+| (core) | `Motion` | carets, `move`, `select_range`, `place_carets`, `add_caret`, `replace_ranges`, `transaction`, `value`, `dragging?` | |
+| `Typing` | | `insert`, `paste`, `auto_close?` | |
+| `Deleting` | `Deletion` | | |
+| `Spacing` | `Whitespace` | `auto_indent?` | include before `LineEditing` |
+| `LineEditing` | `Lines` | `Tab` indents a selection that spans lines | |
+| `Transforming` | `Transform` | `surround`, `unsurround` | |
+| `Selecting` | `Selection` | `select_all`, `select_word`, `select_line`, `brackets` | |
+| `Multicaret` | `Carets` | `collapse`, `remove_last_caret`, `add_next_occurrence`, `skip_occurrence`, `select_all_occurrences`, `add_caret_per_line` | |
+| `Boxing` | `Box` | `box`, `start_box`, `select_box`, `clear_box` | |
+| `Copying` | `Copy` | `clipboard`, `selection_clipboard`, `copyable?`, `copy_on_select?`, `auto_copy` | |
+| `Pasting` | `Clip` | paste cycling | `Typing`, `Copying` |
+| `Undoing` | `UndoRedo` | `undo`, `redo` | |
+| `Finding` | | `find`, `add_caret_at_every_match` | |
+| `Replacing` | | `replace_match`, `replace_all` | |
+| `Folding` | | `folds`, `folds?`, `lift_carets` | |
+| `Snipping` | | `insert_snippet` | |
+| `Recording(C)` | | `record`, `stop`, `replay`, `macros` | `Typing` |
+
+The "Needs" column is checked when the module is included: including `Pasting` before `Typing` and `Copying`, or `LineEditing` before `Spacing`, stops the build with a message naming the order. `Recording(C)` takes the view's whole command union; running a command whose enum is missing from `C` is a compile error, so a recording can never silently skip a step.
+
+To change what a widget can do at run time, keep the document and swap the view:
+
+```crystal
+editor = Textedit::Editor.new(reader.document)
+editor.place_carets(reader.carets, reader.primary)
+reader.close
+```
+
+## Documents
+
+```crystal
+text = Textedit::Document.new(graphemes, "one two",
+  filter:      Textedit::MultiLine.new,
+  history:     Textedit::History::Linear.new(graphemes),
+  constraints: [Textedit::MaxLength.new(80)],
+  style:       Textedit::Style.new(indent: "  ", tab_size: 4, comment: "#"))
 ```
 
 | Option | Default | Effect |
 | --- | --- | --- |
 | `filter` | `SingleLine.new` | What happens to incoming text (see Filters) |
-| `clipboard` | `Register.new` | Where copy, cut and paste go |
-| `selection_clipboard` | `nil` | Where `copy_on_select` goes instead of `clipboard`, for example an X11-style primary selection |
-| `layout` | `LineLayout` | How offsets map to rows and columns |
-| `max_length` | `nil` | Limit in clusters, shared across carets |
-| `indent` | `"  "` | Inserted by `Tab` and `Indent`, removed by `Outdent` |
-| `comment` | `nil` | Line comment prefix for `ToggleComment` |
-| `tab_size` | `4` | How many leading spaces `Outdent` removes when `indent` is a tab |
-| `auto_indent` | `false` | `NewLine` keeps the current line's leading whitespace |
-| `auto_close` | `false` | Typing a bracket or quote inserts its pair (see Typing aids) |
-| `copyable` | `true` | `false` disables copy and cut, for example for a masked password |
-| `copy_on_select` | `false` | Copy a selection as soon as it is made, into `selection_clipboard` when set |
-| `read_only` | `false` | Refuse edits from commands, `insert`, `paste`, `replace_match` and `replace_all`; motion, selection and copy still work, and `value=` and `replace_ranges` from code still apply |
-| `final_newline` | `false` | `export` ends the text with one line ending |
+| `history` | `History::Linear.new(graphemes)` | Records edits for undo; `nil` for none |
+| `constraints` | none | Which edits are admitted and how long the text may grow (see Constraints) |
+| `style` | `Style.new` | `indent` (inserted by `Tab` and `Indent`), `tab_size` (spaces `Outdent` removes when `indent` is a tab), `comment` (line comment prefix for `ToggleComment`) |
 
-Every option except `max_length` is also a property; `max_length=` truncates the text when it shrinks. `dragging=` tells the document a pointer drag is in progress, which holds back `copy_on_select` until the host calls `auto_copy` on release.
+`filter`, `history`, `style` and `line_ending` are properties; assigning `constraints=` truncates the text when a new capacity is lower. A document can also be built from a `Buffer`, which is what `Storage.open` does with a mapped file.
+
+Offsets everywhere count grapheme clusters, not bytes or characters; a line break counts as one cluster.
+
+```crystal
+text.value                 # the text, with \n line breaks
+text.value = "replaced"    # undoable; every view's carets follow
+text.length
+text.views                 # the views attached to it
+```
+
+On a view, `value=` does the same and puts that view's caret at the end.
 
 ### Line endings
 
-Text is always held with `\n` breaks. The ending found in the text a document is created with, or given through `value=`, is kept as `line_ending` (`LF`, `CRLF` or `CR`), and `export` returns the text with it:
+Text is always held with `\n` breaks. The ending found in the text a document is created with, or given through `value=`, is kept as `line_ending` (`LF`, `CRLF` or `CR`); `Storage` writes it back out. Pasted and typed `\r\n` and `\r` become `\n` as well.
 
 ```crystal
 text = Textedit::Document.new(graphemes, "a\r\nb", filter: Textedit::MultiLine.new)
 text.value        # => "a\nb"
 text.line_ending  # => Textedit::LineEnding::CRLF
-text.export       # => "a\r\nb"
 ```
 
-Pasted and typed `\r\n` and `\r` become `\n` as well.
-
-### Saving, transactions and read-only
+### Transactions and the save point
 
 ```crystal
-text.mark_saved
-text.modified?     # false until the text changes again; undoing back to the save point clears it
+editor.transaction do
+  editor.run(Textedit::Motion::DocumentEnd)
+  editor.insert("\n")
+  editor.insert("appended")
+end                # one undo step, one `moved` per view that moved, and one `edited`
 
-text.transaction do
-  text.run(Textedit::Command::DocumentEnd)
-  text.insert("\n")
-  text.insert("appended")
-end                # one undo step, one `moved` and one `edited` notification
+text.mark_saved
+text.modified?     # false until the text changes again
 ```
 
-`transaction` returns the block's value and can be nested; `undo` and `redo` are refused inside one.
+`transaction` returns the block's value and can be nested; `undo` and `redo` are refused inside one. `Document#transaction(view = nil)` is the same without a view to record carets for. With a history, undoing back to the save point clears `modified?`; without one, any edit after `mark_saved` sets it.
+
+### Constraints
+
+A constraint decides whether edits from an `Origin` are admitted and how many clusters the text may hold. The document asks every constraint before each edit.
+
+```crystal
+lock = Textedit::ReadOnly.new          # active by default
+text = Textedit::Document.new(graphemes, "fixed", constraints: [lock, Textedit::MaxLength.new(80)])
+text.admits?                           # => false: user edits are refused
+lock.active = false                    # editable again
+text.capacity                          # => 80, the lowest capacity of all constraints
+```
+
+`Origin` is `User` (typing and commands), `Code` (`value=` and `replace_ranges` from the host), `Undo` or `Redo`. `ReadOnly` admits only `Code`, so the host can still set the text. `MaxLength` trims typed and pasted text to fit, shared across carets, and truncates text given to `value=` or to the constructor. A host constraint includes `Textedit::Constraint` and overrides `admits?(origin)`, `capacity`, or both.
+
+While a document refuses user edits, a view refuses every command whose enum edits — `Deletion`, `Whitespace`, `Lines`, `Transform`, `Clip` and `UndoRedo` — along with `insert`, `paste`, `insert_snippet`, `replace_match` and `replace_all`. Motion, selection and copy still work.
+
+### History
+
+Every edit becomes one `Commit` — its `gesture` (`Typing`, `Deleting` or `Other`), its `origin`, the `changes`, and the carets before and after — and the document hands it to its `history`. Undo asks the history for a `History::Restore` (edits to apply in order, and carets to seat), applies it, and hands that back as a commit with origin `Undo` or `Redo`.
+
+`History::Linear` is the default: an undo and a redo stack, typing and deleting grouped within a time window and broken at word starts, a save point, and a bound.
+
+```crystal
+Textedit::History::Linear.new(graphemes, limit: 1000, window: 2.seconds)
+```
+
+It ignores the commits its own undo and redo produce. A different kind of history includes `Textedit::History` and implements `record(commit)`, `undo`, `redo`, `can_undo?`, `can_redo?`, `modified?`, `mark_saved` and `clear`: for example one that keeps every commit, undo included, so no state is ever lost. `history: nil` turns undo off, and `document.history = …` swaps it on a live document.
 
 ### Marks
 
@@ -156,55 +246,95 @@ text.unmark(spot)
 
 Text inserted exactly at a mark goes after a `Left` mark and before a `Right` mark. A mark inside deleted text moves to where the deletion happened.
 
+## Views
+
+A view owns the carets, the goal column and the `Layout`. Two views of one document share the text and the history: an edit from either one shows in both, the other's carets are carried through it as marks are, and `undo` from either one seats the carets it recorded. `layout = …` is per view, so two panes can wrap the same document at different widths.
+
+```crystal
+text  = Textedit::Editor.new(graphemes, "one two")
+other = Textedit::Reader.new(text.document)
+other.select_range(0, 3)     # its own carets, its own layout
+text.document.views.size     # => 2
+other.close                  # stops following the document
+```
+
+```crystal
+text.cursor                # the head of the primary caret
+text.carets                # Array(Textedit::Caret), sorted and merged
+text.select_range(0, 3)
+text.selected_text
+text.selected_texts
+text.place_carets([Textedit::Caret.at(0), Textedit::Caret.at(4)])
+text.insert("x")           # typed text, at every caret
+text.paste("a\nb")         # one line per caret when the counts match
+text.undo
+text.redo
+```
+
+`dragging=` tells a view a pointer drag is in progress, which holds back `copy_on_select` until the host calls `auto_copy` on release.
+
 ## Commands
 
-`run(command, selecting = false)` carries out one `Textedit::Command`. Motion commands extend the selection when `selecting` is true.
+`run(command, selecting = false)` carries out one command. Every feature's `run` takes `selecting`, so a host can pass its union straight through; motion uses it to extend the selection, everything else ignores it.
 
-| Group | Commands |
+| Enum | Members |
 | --- | --- |
-| Motion | `Left`, `Right`, `WordLeft`, `WordRight`, `SubwordLeft`, `SubwordRight`, `RowStart`, `SmartRowStart`, `RowEnd`, `Up`, `Down`, `PageUp`, `PageDown`, `DocumentStart`, `DocumentEnd` |
-| Selection | `SelectAll`, `SelectWord`, `SelectLine`, `SelectInsideBrackets`, `SelectAroundBrackets`, `SelectInsideQuotes`, `SelectAroundQuotes`, `Collapse` |
-| Carets | `AddNextOccurrence`, `SkipOccurrence`, `SelectAllOccurrences`, `AddCaretAbove`, `AddCaretBelow`, `AddCaretPerLine`, `RemoveLastCaret` |
-| Box | `BoxUp`, `BoxDown`, `BoxLeft`, `BoxRight` |
-| Deleting | `DeleteBackward`, `DeleteForward`, `DeleteWordBackward`, `DeleteWordForward`, `DeleteSubwordBackward`, `DeleteSubwordForward`, `DeleteToRowStart`, `DeleteToRowEnd` |
-| Editing | `NewLine`, `Tab`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateSelection` |
-| Lines | `MoveLinesUp`, `MoveLinesDown`, `DuplicateLines`, `DeleteLines`, `SortLines`, `ReverseLines`, `UniqueLines`, `JoinLines`, `TrimTrailingWhitespace` |
-| Case | `UpperCase`, `LowerCase`, `TitleCase` |
-| Clipboard | `Copy`, `Cut`, `Paste`, `PastePrevious` |
-| History | `Undo`, `Redo` |
+| `Motion` | `Left`, `Right`, `WordLeft`, `WordRight`, `SubwordLeft`, `SubwordRight`, `RowStart`, `SmartRowStart`, `RowEnd`, `Up`, `Down`, `PageUp`, `PageDown`, `DocumentStart`, `DocumentEnd` |
+| `Selection` | `All`, `Word`, `Line`, `InsideBrackets`, `AroundBrackets`, `InsideQuotes`, `AroundQuotes` |
+| `Carets` | `Collapse`, `AddNextOccurrence`, `SkipOccurrence`, `SelectAllOccurrences`, `AddAbove`, `AddBelow`, `AddPerLine`, `RemoveLast` |
+| `Box` | `Up`, `Down`, `Left`, `Right` |
+| `Deletion` | `Backward`, `Forward`, `WordBackward`, `WordForward`, `SubwordBackward`, `SubwordForward`, `ToRowStart`, `ToRowEnd` |
+| `Whitespace` | `NewLine`, `Tab` |
+| `Lines` | `Indent`, `Outdent`, `ToggleComment`, `MoveUp`, `MoveDown`, `Duplicate`, `Delete` |
+| `Transform` | `DuplicateSelection`, `Sort`, `Reverse`, `Unique`, `Join`, `TrimTrailingWhitespace`, `UpperCase`, `LowerCase`, `TitleCase` |
+| `Copy` | `Selection` |
+| `Clip` | `Cut`, `Paste`, `PastePrevious` |
+| `UndoRedo` | `Undo`, `Redo` |
+
+Each enum's `edits?` says whether its commands change the text.
+
+```crystal
+KEYS = {
+  Key::Left      => Textedit::Motion::Left,
+  Key::Backspace => Textedit::Deletion::Backward,
+  Key::CtrlV     => Textedit::Clip::Paste,
+} of Key => Textedit::Field::Command
+
+field.run(KEYS[key], selecting: shift)
+```
 
 `run` returns `true` when the command applied and `false` when it did not, so a host can let the key go on to something else:
 
-- Always `true`: motion, `SelectAll`, `SelectWord`, `SelectLine`, `AddCaretAbove`, `AddCaretBelow`, the `Box` commands, the `Delete` commands, `Tab`, `Copy`, `Cut` and `Paste` — even when there was nothing to delete or copy.
-- `false` when there was nothing to do: `Collapse` and `RemoveLastCaret` with one caret; the bracket and quote selection commands with no target; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `DuplicateSelection` with no selections; `PastePrevious` without an active paste or older entry; `NewLine`, `Indent`, `Outdent`, `ToggleComment` and the `Lines` commands when the text did not change; `Undo` and `Redo` with an empty stack.
-- `false` for every command that edits while the document is read-only.
+- Always `true`: `Motion`, `Selection::All`, `Selection::Word`, `Selection::Line`, `Carets::AddAbove`, `Carets::AddBelow`, every `Box` and `Deletion` command, `Whitespace::Tab`, `Copy::Selection`, `Clip::Cut` and `Clip::Paste` — even when there was nothing to delete or copy.
+- `false` when there was nothing to do: `Carets::Collapse` and `Carets::RemoveLast` with one caret; the bracket and quote `Selection` commands with no target; `AddNextOccurrence`, `SkipOccurrence` and `SelectAllOccurrences` without a match; `AddPerLine` when no selection spans lines; `Transform::DuplicateSelection` and the case transforms without a selection to change; `Sort`, `Reverse`, `Unique`, `Join` and `TrimTrailingWhitespace` when the lines did not change; `Clip::PastePrevious` without an active paste or older entry; `Whitespace::NewLine` and every `Lines` command when the text did not change (`ToggleComment` also without a `comment` in the style); `UndoRedo` with nothing to undo or redo, or without a history.
+- `false` for every command whose enum edits while the document refuses user edits.
 
 Notes on individual commands:
 
 - `Up`, `Down`, `PageUp` and `PageDown` remember the column a caret started in, so moving through a short line and on to a long one returns to that column. Any other move or edit forgets it.
 - `SmartRowStart` goes to the first non-blank cluster of the row, or to the row start when already there.
-- `SelectInsideBrackets` and `SelectAroundBrackets` select the innermost balanced pair around every caret, excluding or including its delimiters. The quote equivalents pair unescaped single or double quotes on one line.
+- `InsideBrackets` and `AroundBrackets` select the innermost balanced pair around every caret, excluding or including its delimiters. The quote equivalents pair unescaped single or double quotes on one line.
 - `DuplicateSelection` inserts a copy immediately after every nonempty selection and selects the copies, preserving their direction. Empty carets stay unchanged.
-- `Tab` indents every line when a selection spans lines, and inserts the indent otherwise. `Outdent` removes one indent, a leading tab, or up to that many spaces.
-- `ToggleComment` comments every non-blank line under the carets at their shallowest indentation, or uncomments them when all are commented. It needs the `comment` option.
-- `MoveLines*`, `Indent`, `Outdent`, `ToggleComment`, `DuplicateLines` and `DeleteLines` act once per block of lines under the carets.
+- `Tab` inserts the style's indent. With `LineEditing` included, it indents every line instead when a selection spans lines. `Outdent` removes one indent, a leading tab, or up to that many spaces.
+- `ToggleComment` comments every non-blank line under the carets at their shallowest indentation, or uncomments them when all are commented. It needs a `comment` in the style.
+- `MoveUp`, `MoveDown`, `Indent`, `Outdent`, `ToggleComment`, `Duplicate` and `Delete` act once per block of lines under the carets.
 - `AddNextOccurrence` first selects the word under an empty caret. `SkipOccurrence` moves the most recent caret on to the next occurrence. `SelectAllOccurrences` puts a caret on every occurrence of the selection, or of the word under the caret.
 - `SubwordLeft` and `SubwordRight` stop at camelCase humps, underscores and the start of a word, so `fooBar_baz` has four stops.
-- `SortLines`, `ReverseLines`, `UniqueLines` and `TrimTrailingWhitespace` act on the whole block of lines under the carets and return `false` when nothing changed. `JoinLines` joins the block, or the next line when a caret is empty.
-- `UpperCase`, `LowerCase` and `TitleCase` transform each selection and keep it selected; without a selection they do nothing.
-- `AddCaretPerLine` puts a caret at the end of every line a selection spans.
+- `Sort`, `Reverse`, `Unique` and `TrimTrailingWhitespace` act on the whole block of lines under the carets. `Join` joins the block, or the next line when a caret is empty.
+- `UpperCase`, `LowerCase` and `TitleCase` transform each selection and keep it selected.
+- `AddPerLine` puts a caret at the end of every line a selection spans.
 - `PastePrevious` replaces the immediately preceding paste with the next older clipboard entry; repeated calls keep cycling. Moving, editing or starting another paste ends that session.
-- `Box*` grows a rectangular selection from the primary caret. `start_box(row, column)`, `select_box(anchor_row, anchor_column, head_row, head_column)` and `clear_box` let a host drive it from a pointer; `box` returns the current corners.
+- `Box` grows a rectangular selection from the primary caret. `start_box(row, column)`, `select_box(anchor_row, anchor_column, head_row, head_column)` and `clear_box` let a host drive it from a pointer; `box` returns the current corners.
 
 Typing is not a command: send `insert(text)`. Pressing Enter in a single-line field is not a command either; the host decides what it means.
 
 ### Typing aids
 
-With `auto_close` on, typing `(`, `[`, `{`, `"` or `'` inserts the pair and leaves the caret between them; with a selection it wraps the selection and keeps it selected. Typing a closing character in front of the same character steps over it, a quote typed right after a word stays single, and `DeleteBackward` between an empty pair removes both. Pasted text is never paired.
+With `auto_close` on, typing `(`, `[`, `{`, `"` or `'` inserts the pair and leaves the caret between them; with a selection it wraps the selection and keeps it selected. Typing a closing character in front of the same character steps over it, a quote typed right after a word stays single, and `Deletion::Backward` between an empty pair removes both. Pasted text is never paired. With `auto_indent` on, `NewLine` keeps the current line's leading whitespace.
 
 ## Interfaces
 
-The host plugs into a document through these modules. Each is small, and all but `Graphemes` come with a default.
+The host plugs in through these modules. Each is small, and all but `Graphemes` come with a default.
 
 | Interface | Methods | Default |
 | --- | --- | --- |
@@ -213,7 +343,10 @@ The host plugs into a document through these modules. Each is small, and all but
 | `Clipboard` | `write(text)`, `read { \|text\| }` | `Register` (in memory) |
 | `ClipboardHistory` | `size`, `read(index) { \|text\| }` | `Register` (100 entries) |
 | `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line) |
-| `Listener` | `applied`, `edited`, `moved`, `decorated` | no-ops to override |
+| `History` | `record`, `undo`, `redo`, `can_undo?`, `can_redo?`, `modified?`, `mark_saved`, `clear` | `History::Linear` |
+| `Constraint` | `admits?(origin)`, `capacity` | `ReadOnly`, `MaxLength` |
+| `Listener` | `applied`, `edited`, `moved` | no-ops to override |
+| `Follower` | `follow(change)` | `Decorations`, `Annotations` |
 | `TokenSource` | `tokens(buffer, line)` | none |
 | `Tokenizer` | `tokens(text)` | none |
 
@@ -223,14 +356,15 @@ The host plugs into a document through these modules. Each is small, and all but
 
 **Clipboard.** `read` takes a block so a clipboard can answer later, for example after asking a terminal; the paste happens when the block is called. `Register` also includes `ClipboardHistory`, keeping the newest 100 unique entries and exposing them through `entries`; `Register.new(limit: n)` changes that bound. Other clipboards can opt into `PastePrevious` by including `ClipboardHistory`.
 
-**Layout.** `cell_of(offset)` returns a `Cell` (`column`, `row`) in display columns, and `offset_in(row, column)` goes back. A host that wraps lines implements `Layout` over its wrapped rows and assigns it with `document.layout = …`; vertical motion, paging (`page_rows`), smart Home, carets above and below and box selection then follow the wrapped rows.
+**Layout.** `cell_of(offset)` returns a `Cell` (`column`, `row`) in display columns, and `offset_in(row, column)` goes back. A host that wraps lines implements `Layout` over its wrapped rows and assigns it with `view.layout = …`; vertical motion, paging (`page_rows`), smart Home, carets above and below and box selection then follow the wrapped rows.
 
 **Listener.** `document.listen(listener)` returns a proc that removes it again.
 
 - `applied(document, change)` runs for each `Change` as it lands, with the buffer in the state right after it. This is the place to update per-line caches such as wrapping.
-- `edited(document, changes)` runs once per edit or transaction, after the carets are placed, with every change in the order it was applied. Undo reports the changes it applied.
 - `moved(view)` runs whenever that view's carets change, including after every edit. The view it is given carries `view.document`.
-- `decorated(document)` runs when a source replaces its decorations, and `annotated(document)` when a source replaces its annotations.
+- `edited(document, changes)` runs once per edit or transaction, after the carets are placed, with every change in the order it was applied. Undo reports the changes it applied.
+
+**Follower.** `document.track(follower)` calls `follow(change)` for each change as it lands, after the marks and before the views and listeners, and returns a proc that stops it.
 
 **TokenSource.** Anything that can return the tokens of a line in a buffer includes `TokenSource`, so a renderer takes a source without knowing what produced it. `Asekii::Syntax::Highlighter` from [asekii-editor](https://github.com/shpeckman/asekii-editor) is one. A `Token` is a `start`, a `count` and a `kind`, with columns counting clusters, and `TokenSource::NO_TOKENS` is the shared empty result.
 
@@ -282,51 +416,56 @@ buffer.measure("é👍", Textedit::Units::Utf16)       # => 3
 buffer.line(3).units(Textedit::Units::Bytes, 0, 5)  # the size of columns 0...5 in bytes
 ```
 
-A `Change` records `from`, the `removed` and `inserted` text, and their sizes in clusters; `removed_lines` and `inserted_lines` count line breaks. `start_point(buffer, unit)`, `old_end_point` and `new_end_point` detextedit where it starts and where it ended before and after, as a language server or an incremental parser expects; call them from `Listener#applied`, while the buffer is in the state right after the change. When an edit merges with a neighbouring cluster — a combining accent typed after a letter — the change is widened to whole clusters, so undoing it is exact.
+A `Change` records `from`, the `removed` and `inserted` text, and their sizes in clusters; `removed_lines` and `inserted_lines` count line breaks. `start_point(buffer, unit)`, `old_end_point` and `new_end_point` describe where it starts and where it ended before and after, as a language server or an incremental parser expects; call them from `Listener#applied`, while the buffer is in the state right after the change. When an edit merges with a neighbouring cluster — a combining accent typed after a letter — the change is widened to whole clusters, so undoing it is exact.
 
-`replace_ranges` applies several `Edit`s (a range and its new text) as one undo step and moves the carets with the text:
+`replace_ranges` applies several `Edit`s (a range and its new text) as one undo step:
 
 ```crystal
-text.replace_ranges([Textedit::Edit.new(0...3, "one"), Textedit::Edit.new(10...10, "!")])
+view.replace_ranges([Textedit::Edit.new(0...3, "one"), Textedit::Edit.new(10...10, "!")])
+document.replace_ranges(edits)     # no view: every view's carets follow the text
 ```
 
-Its text is used as given, without the filter.
+On a view it moves that view's carets with the text. Its text is used as given, without the filter, and it counts as an edit from `Code`.
 
 ## Decorations
 
-A decoration marks a range of the text with a `kind` and a `message`, for example a compiler error. Its edges move with edits like marks do, without growing when text is typed right at them, and a decoration whose range shrinks to nothing remains, empty, until it is replaced.
+A decoration marks a range of the text with a `kind` and a `message`, for example a compiler error. Its edges move with edits like marks do, without growing when text is typed right at them, and a decoration whose range shrinks to nothing remains, empty, until it is replaced. A `Decorations` store follows the document it is made for:
 
 ```crystal
-text.decorate("lsp", [Textedit::Decoration.new(4...9, "error", "undefined method")])
-text.decorations             # every decoration, sorted by start
-text.decorations(0, 20)      # those overlapping 0...20
-text.decorations_at(6)       # those covering offset 6
-text.decorate("lsp", [] of Textedit::Decoration)   # clears that source's decorations
+diagnostics = Textedit::Decorations.new(document)
+diagnostics.replace("lsp", [Textedit::Decoration.new(4...9, "error", "undefined method")])
+diagnostics.entries             # every decoration, sorted by start
+diagnostics.between(0, 20)      # those overlapping 0...20
+diagnostics.at(6)               # those covering offset 6
+diagnostics.replace("lsp", [] of Textedit::Decoration)   # clears that source's decorations
+diagnostics.listen { redraw }   # returns a proc that removes the block
+diagnostics.close               # stops following the document
 ```
 
-Each call replaces every decoration from the same `source`, so several producers can share a document, and tells listeners through `decorated`.
+Each `replace` replaces every decoration from the same `source`, so several producers can share one store, and calls its listeners.
 
 ## Annotations
 
 An annotation is text shown beside the document rather than in it — an inlay hint, a git blame, a line note. Its offset follows edits like a mark, and each source replaces its own set, as decorations do.
 
 ```crystal
-text.annotate("lsp", [Textedit::Annotation.new(7, ": Int32", Textedit::Placement::After, "type")])
-text.annotations                 # every annotation, sorted by offset
-text.annotations(0, 20)          # those between two offsets
-text.annotations_at(7)
-text.annotations_on(3)           # those on line 3
-text.annotate("lsp", [] of Textedit::Annotation)   # clears that source
+hints = Textedit::Annotations.new(document)
+hints.replace("lsp", [Textedit::Annotation.new(7, ": Int32", Textedit::Placement::After, "type")])
+hints.entries                  # every annotation, sorted by offset
+hints.between(0, 20)           # those between two offsets
+hints.at(7)
+hints.on(3)                    # those on line 3
+hints.replace("lsp", [] of Textedit::Annotation)   # clears that source
 ```
 
-`Placement` is `Before`, `After` or `RowEnd`, and decides which side of the offset the host draws the text on; a `Before` annotation keeps its place when text is typed at it, the others move with it. Listeners hear `annotated`.
+`Placement` is `Before`, `After` or `RowEnd`, and decides which side of the offset the host draws the text on; a `Before` annotation keeps its place when text is typed at it, the others move with it. `listen` and `close` work as they do for decorations.
 
 ## Folding
 
-Folds belong to a view, so two panes can fold a document differently. A fold is a line range held by marks, so it follows edits.
+`Folding` gives a view its own folds, so two panes can fold a document differently. A fold is a line range held by marks, so it follows edits.
 
 ```crystal
-folds = text.view.folds
+folds = view.folds
 folds.fold(2, 8)             # collapsed by default; nil for an empty or out-of-range range
 folds.collapsed?(2)          # the header line
 folds.hidden?(5)             # a line inside a collapsed fold
@@ -336,21 +475,21 @@ folds.unfold(2)
 folds.rows                   # the visible lines, in order
 folds.replace([{0, 4}, {6, 9}])   # every fold at once, as a query would supply them
 folds.clear
-text.view.lift_carets        # moves carets on hidden lines to the end of the visible line above; false when none was hidden
+view.lift_carets             # moves carets on hidden lines to the end of the visible line above; false when none was hidden
 ```
 
 `LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` counts fold, unfold, collapse and expand calls, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
 
 ## Snippets
 
-A snippet is text with tabstops. `Snippet.parse` turns LSP snippet syntax into plain text plus stop spans, and `View#insert_snippet` inserts it and selects the first stop.
+A snippet is text with tabstops. `Snippet.parse` turns LSP snippet syntax into plain text plus stop spans, and `Snipping#insert_snippet` inserts it and selects the first stop.
 
 ```crystal
-snippet = text.view.insert_snippet("def ${1:name}($2)\n  $0\nend")
-text.selected_text          # => "name"
-text.insert("run")          # fills the stop
-snippet.next_stop(text.view)
-snippet.previous_stop(text.view)
+snippet = editor.insert_snippet("def ${1:name}($2)\n  $0\nend")
+editor.selected_text        # => "name"
+editor.insert("run")        # fills the stop
+snippet.next_stop(editor)
+snippet.previous_stop(editor)
 snippet.active?
 snippet.close               # drops its marks
 ```
@@ -365,28 +504,32 @@ snippet.close               # drops its marks
 `Textedit.diff` turns an old and a new text into the smallest set of line edits, for `replace_ranges`:
 
 ```crystal
-text.replace_ranges(Textedit.diff(text.value, formatted, graphemes))
+view.replace_ranges(Textedit.diff(view.value, formatted, graphemes))
 ```
 
 The carets, marks, decorations and annotations outside the changed lines stay where they are, which is what `value=` cannot do. It is a Myers line diff with common ends trimmed; past `limit` lines of difference it falls back to one edit covering the changed region.
 
 ## Opening and saving a file
 
-`Document.open` keeps a read-only mapping of the file and finds the lines in its bytes. Unchanged lines and long-line pieces stay in the mapping with no per-line string; edits create ordinary string-backed pieces only for changed storage. The caret starts at the beginning, and `path` remembers the file.
+`Storage` ties a document to a file: its `path`, whether to end the file with a line ending (`final_newline`), `export`, and `save`. `Storage.open` keeps a read-only mapping of the file and finds the lines in its bytes. Unchanged lines and long-line pieces stay in the mapping with no per-line string; edits create ordinary string-backed pieces only for changed storage.
 
 ```crystal
-text = Textedit::Document.open(graphemes, "src/app.cr", filter: Textedit::MultiLine.new)
-text.buffer.mapped?        # true
-text.buffer.line(0).to_slice  # read-only Bytes into the mapping
-text.buffer.line(0).text      # materializes and caches a String only when asked
-text.line_ending           # taken from the file
+storage = Textedit::Storage.open(graphemes, "src/app.cr", filter: Textedit::MultiLine.new)
+storage.document.buffer.mapped?       # true
+storage.document.buffer.line(0).to_slice  # read-only Bytes into the mapping
+storage.document.line_ending          # taken from the file
+editor = Textedit::Editor.new(storage.document)
+editor.move(0)
 
-text.insert("// edited\n")
-text.save                   # writes path and clears modified?
-text.save("other/app.cr")   # save-as; updates path
+editor.insert("// edited\n")
+storage.save                 # writes path and marks the document saved
+storage.save("other/app.cr") # save-as; updates path
+storage.export               # the text with the document's line ending
+
+Textedit::Storage.new(document, "notes.txt", final_newline: true)   # for a document built from text
 ```
 
-`save` writes through a writable mapping of a temporary file in the destination directory, closes it, then renames it over the destination. The live source mapping is never truncated, and a failed save leaves the destination and document save point unchanged. Existing destination permissions are preserved. Saving a document without a path requires an explicit one.
+`Storage.open` takes the `Document` options as well. `save` writes through a writable mapping of a temporary file in the destination directory, closes it, then renames it over the destination. The live source mapping is never truncated, and a failed save leaves the destination and the document's save point unchanged. Existing destination permissions are preserved. Saving without a path requires an explicit one.
 
 `Textedit::Mapped` is the mapping itself, for a host that wants the bytes:
 
@@ -409,24 +552,27 @@ Mappings need a POSIX system and refuse a file larger than `Int32::MAX`. A persi
 `Buffer#revision` counts edits, and the buffer keeps the last 256 of them. `Document#map` carries an offset or a range from an older revision to the current one, for a result that arrives late:
 
 ```crystal
-mark = text.revision
+mark = document.revision
 # … a language server answers three keystrokes later …
-text.map(offset, mark)        # => the offset now, or nil if the journal no longer reaches back
-text.map(range, mark)         # a range, which does not grow at its edges
+document.map(offset, mark)    # => the offset now, or nil if the journal no longer reaches back
+document.map(range, mark)     # a range, which does not grow at its edges
 ```
 
 ## Find and replace
 
-`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. Literal searches and regular expressions proved unable to consume a line break keep matches per line and, after an edit, rescan only the lines the edit touched. Multiline-capable or uncertain regular expressions retain the whole-text rescan.
+`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. Literal searches and regular expressions proved unable to consume a line break keep matches per line and, after an edit, rescan only the lines the edit touched. Multiline-capable or uncertain regular expressions retain the whole-text rescan. `Finding` selects matches; `Replacing` changes them.
 
 ```crystal
 search = Textedit::Search.new("(\\w+)=(\\d)", regex: true)
-found  = text.find(search)                          # selects the next match
-text.replace_match(search, found.not_nil!, "$2=$1") # only if that match is still selected
-text.find(search, backward: true)                   # selects the previous match
-text.replace_all(search, "$2=$1")                   # one undo step; returns the count
-search.error                                        # the message for an invalid pattern
+found  = editor.find(search)                          # selects the next match
+editor.replace_match(search, found.not_nil!, "$2=$1") # only if that match is still selected
+editor.find(search, backward: true)                   # selects the previous match
+editor.replace_all(search, "$2=$1")                   # one undo step; returns the count
+editor.add_caret_at_every_match(search)               # a caret on every match
+search.error                                          # the message for an invalid pattern
 ```
+
+`Selecting#brackets` returns the offsets of the bracket pair beside an empty primary caret.
 
 ## Tokens
 
@@ -451,7 +597,7 @@ marker = Asekii::Syntax::Tokenizer.new(Asekii::Syntax::Languages["crystal"], gra
 marker.tokens("def f\nend")                                                              # => [[Token], [Token]]
 ```
 
-To examine text outside a document, build a line with `Textedit::Line.new(text, graphemes)`. `text.brackets` returns the offsets of the bracket pair beside an empty primary caret.
+To examine text outside a document, build a line with `Textedit::Line.new(text, graphemes)`.
 
 ## Input recall
 
@@ -466,22 +612,20 @@ past.forward       # => "dra"
 
 ## Macros
 
-`MacroLog` records the commands and the text a view receives, and replays them:
+`Recording(C)` records the commands and the text a view receives into a `MacroLog(C)`, and replays them:
 
 ```crystal
-log = Textedit::MacroLog.new
-text.view.macros = log
+editor.record
+editor.run(Textedit::Motion::RowEnd)
+editor.insert(";")
+editor.stop
 
-log.record
-text.run(Textedit::Command::RowEnd)
-text.insert(";")
-log.stop
-
-log.replay(text.view)            # once, as one undo step
-log.replay(text.view, 10)        # ten more times
+editor.replay              # once, as one undo step
+editor.replay(10)          # ten more times
+editor.macros.entries      # Array(Editor::Command | String)
 ```
 
-A replay records nothing itself, and each pass is one undo step.
+A replay records nothing itself, and each pass is one undo step. `editor.macros = …` swaps the log, for example to share one between views of the same type.
 
 ## Development
 
@@ -489,7 +633,7 @@ A replay records nothing itself, and each pass is one undo step.
 crystal spec
 ```
 
-The specs drive documents directly, with a small `Graphemes` built on the standard library in `spec/spec_helper.cr`. `History` takes an optional clock, which the specs use instead of sleeping.
+The specs drive the presets directly, with a small `Graphemes` built on the standard library in `spec/spec_helper.cr`. `History::Linear` takes an optional clock, which the specs use instead of sleeping.
 
 ## License
 

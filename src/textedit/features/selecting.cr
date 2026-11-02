@@ -1,34 +1,60 @@
-# src/textedit/view/finder.cr
+# src/textedit/features/selecting.cr
 module Textedit
-  class View
-    OPENERS = {"(" => ")", "[" => "]", "{" => "}"}
-    CLOSERS = {")" => "(", "]" => "[", "}" => "{"}
-    REACH   = 20_000
+  enum Selection
+    All
+    Word
+    Line
+    InsideBrackets
+    AroundBrackets
+    InsideQuotes
+    AroundQuotes
 
-    def find(search : Search, backward : Bool = false, from : Int32? = nil) : Range(Int32, Int32)?
-      lead  = primary_caret
-      start = from || (lead.empty? ? lead.head : lead.start + 1)
-      found = backward ? search.previous(@buffer, from || lead.start) : search.next(@buffer, start)
-      select_range(found.begin, found.end) if found
-      found
+    def edits? : Bool
+      false
     end
+  end
 
-    def replace_match(search : Search, match : Range(Int32, Int32), template : String) : Bool
-      return false if @document.read_only?
-      return false unless match == selection && search.index(@buffer, match)
+  module Selecting
+    def run(command : Selection, selecting : Bool = false) : Bool
+      return false unless enter(command)
 
-      replace_ranges([Edit.new(match, @document.prepare(search.expand(@buffer, match, template)))])
+      case command
+      in .all?             then select_all
+      in .word?            then select_word
+      in .line?            then select_line
+      in .inside_brackets? then return select_objects { |caret| bracket_object(caret, false) }
+      in .around_brackets? then return select_objects { |caret| bracket_object(caret, true) }
+      in .inside_quotes?   then return select_objects { |caret| quote_object(caret, false) }
+      in .around_quotes?   then return select_objects { |caret| quote_object(caret, true) }
+      end
       true
     end
 
-    def replace_all(search : Search, template : String) : Int32
-      return 0 if @document.read_only?
+    def select_all : Nil
+      select_range(0, length)
+      selected
+    end
 
-      found = search.matches(@buffer)
-      return 0 if found.empty?
+    def select_word : Nil
+      list = @carets.map do |caret|
+        span = word_at(caret.head)
+        span ? Caret.new(span.begin, span.end) : caret
+      end
+      seat(list, @primary)
+      selected
+    end
 
-      replace_ranges(found.map { |range| Edit.new(range, @document.prepare(search.expand(@buffer, range, template))) })
-      found.size
+    def select_line : Nil
+      list = @carets.map do |caret|
+        first = @buffer.position(caret.start).line
+        stop  = @buffer.position(caret.stop)
+        last  = stop.line
+        last -= 1 if last > first && stop.column == 0 && !caret.empty?
+        tail  = last + 1 < @buffer.line_count ? @buffer.line_start(last + 1) : @buffer.line_end(last)
+        Caret.new(@buffer.line_start(first), tail)
+      end
+      seat(list, @primary)
+      selected
     end
 
     def brackets : {Int32, Int32}?
@@ -37,23 +63,15 @@ module Textedit
 
       {lead.head - 1, lead.head}.each do |offset|
         cluster = @buffer.cluster(offset) || next
-        if closer = OPENERS[cluster]?
+        if closer = Brackets::OPENERS[cluster]?
           found = scan(offset, 1, cluster, closer)
           return {offset, found} if found
-        elsif opener = CLOSERS[cluster]?
+        elsif opener = Brackets::CLOSERS[cluster]?
           found = scan(offset, -1, cluster, opener)
           return {found, offset} if found
         end
       end
       nil
-    end
-
-    private def select_brackets(around : Bool) : Bool
-      select_objects { |caret| bracket_object(caret, around) }
-    end
-
-    private def select_quotes(around : Bool) : Bool
-      select_objects { |caret| quote_object(caret, around) }
     end
 
     private def select_objects(& : Caret -> Range(Int32, Int32)?) : Bool
@@ -64,14 +82,14 @@ module Textedit
       return false if list == @carets
 
       seat(list, @primary)
-      auto_copy
+      selected
       true
     end
 
     private def bracket_object(caret : Caret, around : Bool) : Range(Int32, Int32)?
       best = nil.as({Int32, Int32}?)
 
-      OPENERS.each do |opener, closer|
+      Brackets::OPENERS.each do |opener, closer|
         opening_before(caret, opener, closer).each do |start|
           stop = scan(start, 1, opener, closer) || next
           next unless stop >= caret.stop
@@ -93,7 +111,7 @@ module Textedit
 
       depth  = 0
       offset = caret.start - 1
-      limit  = REACH
+      limit  = Brackets::REACH
       while offset >= 0 && limit > 0
         cluster = @buffer.cluster(offset)
         if cluster == closer
@@ -116,7 +134,7 @@ module Textedit
       start = @buffer.line_start(first.line)
       stop  = @buffer.line_end(first.line)
       {'"', '\''}.each do |quote|
-        marks = [] of Int32
+        marks  = [] of Int32
         offset = start
         while offset < stop
           marks << offset if @buffer.cluster(offset) == quote.to_s && !escaped?(offset, start)
@@ -133,7 +151,7 @@ module Textedit
     end
 
     private def escaped?(offset : Int32, floor : Int32) : Bool
-      count = 0
+      count  = 0
       offset -= 1
       while offset >= floor && @buffer.cluster(offset) == "\\"
         count += 1
@@ -145,7 +163,7 @@ module Textedit
     private def scan(from : Int32, step : Int32, own : String, other : String) : Int32?
       depth  = 0
       offset = from
-      limit  = REACH
+      limit  = Brackets::REACH
 
       while limit > 0
         offset += step

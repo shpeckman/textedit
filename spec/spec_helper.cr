@@ -118,32 +118,24 @@ def line(text : String) : Textedit::Line
   Textedit::Line.new(text, GRAPHEMES)
 end
 
-def document(text : String = "", **options) : Textedit::Document
-  Textedit::Document.new(GRAPHEMES, text, **options)
+def editor(text : String = "", **options) : Textedit::Editor
+  Textedit::Editor.new(GRAPHEMES, text, **{filter: Textedit::SingleLine.new}.merge(options))
 end
 
-def lines(text : String = "", **options) : Textedit::Document
-  Textedit::Document.new(GRAPHEMES, text, **options, filter: Textedit::MultiLine.new)
+def lines(text : String = "", **options) : Textedit::Editor
+  Textedit::Editor.new(GRAPHEMES, text, **options)
 end
 
-def code(text : String = "", **options) : Textedit::Document
-  Textedit::Document.new(GRAPHEMES, text, **options, filter: Textedit::MultiLine.new("  "), auto_indent: true)
+def code(text : String = "", **options) : Textedit::Editor
+  subject = Textedit::Editor.new(GRAPHEMES, text, **{filter: Textedit::MultiLine.new("  ")}.merge(options))
+  subject.auto_indent = true
+  subject
 end
 
-def heads(document : Textedit::Document) : Array(Int32)
-  document.carets.map(&.head)
+def heads(view : Textedit::View) : Array(Int32)
+  view.carets.map(&.head)
 end
 
 def change(from : Int32, removed : String, inserted : String) : Textedit::Change
   Textedit::Change.new(from, removed, inserted, GRAPHEMES.boundaries(removed).size - 1, GRAPHEMES.boundaries(inserted).size - 1)
-end
-
-class Noticed
-  include Textedit::Listener
-
-  getter annotations = 0
-
-  def annotated(document : Textedit::Document) : Nil
-    @annotations += 1
-  end
 end

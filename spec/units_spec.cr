@@ -39,25 +39,26 @@ describe Textedit::Change do
   end
 end
 
-describe Textedit::Decoration do
+describe Textedit::Decorations do
   it "follows edits without growing at its edges and is replaced per source" do
-    text   = document("one two three")
-    events = Recorder.new
-    text.listen(events)
-    text.decorate("lsp", [Textedit::Decoration.new(4...7, "error", "bad"), Textedit::Decoration.new(8...8, "hint")])
-    text.decorate("spell", [Textedit::Decoration.new(0...3, "warning")])
-    text.decorations.map(&.range).should eq([0...3, 4...7, 8...8])
+    text    = editor("one two three")
+    found   = Textedit::Decorations.new(text.document)
+    changes = 0
+    found.listen { changes += 1 }
+    found.replace("lsp", [Textedit::Decoration.new(4...7, "error", "bad"), Textedit::Decoration.new(8...8, "hint")])
+    found.replace("spell", [Textedit::Decoration.new(0...3, "warning")])
+    found.entries.map(&.range).should eq([0...3, 4...7, 8...8])
     text.move(4)
     text.insert("XX")
     text.move(9)
     text.insert("Y")
-    text.decorations.map(&.range).should eq([0...3, 6...9, 11...11])
-    text.decorations_at(7).map(&.message).should eq(["bad"])
-    text.decorations(0, 5).map(&.kind).should eq(["warning"])
-    text.decorations(11, 11).map(&.kind).should eq(["hint"])
-    text.decorate("lsp", [] of Textedit::Decoration)
-    text.decorations.map(&.source).should eq(["spell"])
-    events.moves.should be > 0
+    found.entries.map(&.range).should eq([0...3, 6...9, 11...11])
+    found.at(7).map(&.message).should eq(["bad"])
+    found.between(0, 5).map(&.kind).should eq(["warning"])
+    found.between(11, 11).map(&.kind).should eq(["hint"])
+    found.replace("lsp", [] of Textedit::Decoration)
+    found.entries.map(&.source).should eq(["spell"])
+    changes.should eq(3)
   end
 end
 

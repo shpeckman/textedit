@@ -9,11 +9,9 @@ module Textedit
 
     def moved(view : View) : Nil
     end
+  end
 
-    def decorated(document : Document) : Nil
-    end
-
-    def annotated(document : Document) : Nil
-    end
+  module Follower
+    abstract def follow(change : Change) : Nil
   end
 end

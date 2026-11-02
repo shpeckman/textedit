@@ -60,7 +60,7 @@ end
 
 describe Textedit::Filter do
   it "lets a host decide what text a document accepts" do
-    text = document("a1b2", filter: Digits.new)
+    text = editor("a1b2", filter: Digits.new)
     text.value.should eq("12")
     text.insert("x3")
     text.value.should eq("123")
@@ -124,20 +124,20 @@ describe Textedit::Layout do
     text = lines((1..6).join('\n'))
     text.layout = Paged.new(Textedit::LineLayout.new(text.buffer), 2)
     text.move(0)
-    text.run(Textedit::Command::PageDown)
+    text.run(Textedit::Motion::PageDown)
     text.layout.row_of(text.cursor).should eq(2)
-    text.run(Textedit::Command::PageDown, selecting: true)
+    text.run(Textedit::Motion::PageDown, selecting: true)
     text.selected_text.should eq("3\n4\n")
-    text.run(Textedit::Command::PageUp)
+    text.run(Textedit::Motion::PageUp)
     text.layout.row_of(text.cursor).should eq(2)
   end
 end
 
 describe Textedit::Listener do
   it "hears every change as it lands, every batch once its carets are seated, and every caret move" do
-    text   = document("ab")
+    text   = editor("ab")
     events = Recorder.new
-    stop   = text.listen(events)
+    stop   = text.document.listen(events)
     text.place_carets([Textedit::Caret.at(1), Textedit::Caret.at(2)])
     text.insert("X")
     events.applied.should eq([change(2, "", "X"), change(1, "", "X")])

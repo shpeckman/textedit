@@ -54,14 +54,15 @@ describe "Textedit.diff" do
 
   it "keeps carets, marks and decorations outside the changed region" do
     subject = lines("keep\nchange me\nkeep too")
-    spot    = subject.mark(2)
-    subject.decorate("lsp", [Textedit::Decoration.new(0...4, "error", "boom")])
+    spot    = subject.document.mark(2)
+    found   = Textedit::Decorations.new(subject.document)
+    found.replace("lsp", [Textedit::Decoration.new(0...4, "error", "boom")])
     subject.select_range(0, 4)
 
     subject.replace_ranges(Textedit.diff(subject.value, "keep\nchanged\nkeep too", GRAPHEMES))
     subject.value.should eq("keep\nchanged\nkeep too")
     spot.offset.should eq(2)
-    subject.decorations.first.range.should eq(0...4)
+    found.entries.first.range.should eq(0...4)
     subject.selection.should eq(0...4)
   end
 
@@ -76,41 +77,41 @@ end
 describe "Textedit::Document#map" do
   it "maps an offset forward across later edits" do
     subject = lines("one two three")
-    mark    = subject.revision
-    subject.run(Textedit::Command::DocumentStart)
+    mark    = subject.document.revision
+    subject.run(Textedit::Motion::DocumentStart)
     subject.insert("zero ")
 
-    subject.map(4, mark).should eq(9)
-    subject.map(0, mark).should eq(0)
+    subject.document.map(4, mark).should eq(9)
+    subject.document.map(0, mark).should eq(0)
   end
 
   it "maps a range and keeps it from growing at its edges" do
     subject = lines("one two three")
-    mark    = subject.revision
-    subject.run(Textedit::Command::DocumentStart)
+    mark    = subject.document.revision
+    subject.run(Textedit::Motion::DocumentStart)
     subject.insert("xx")
 
-    subject.map(4...7, mark).should eq(6...9)
+    subject.document.map(4...7, mark).should eq(6...9)
   end
 
   it "collapses an offset inside removed text" do
     subject = lines("alpha beta gamma")
-    mark    = subject.revision
+    mark    = subject.document.revision
     subject.select_range(0, 11)
-    subject.run(Textedit::Command::DeleteForward)
+    subject.run(Textedit::Deletion::Forward)
 
-    subject.map(6, mark).should eq(0)
+    subject.document.map(6, mark).should eq(0)
   end
 
   it "returns the offset unchanged at the current revision" do
     subject = lines("one")
-    subject.map(2, subject.revision).should eq(2)
+    subject.document.map(2, subject.document.revision).should eq(2)
   end
 
   it "gives up when the journal no longer reaches back" do
     subject = lines("x")
-    subject.map(0, subject.revision + 5).should be_nil
+    subject.document.map(0, subject.document.revision + 5).should be_nil
     300.times { subject.insert("a") }
-    subject.map(0, 0).should be_nil
+    subject.document.map(0, 0).should be_nil
   end
 end
