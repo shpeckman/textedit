@@ -232,7 +232,52 @@ Every edit becomes one `Commit` — its `gesture` (`Typing`, `Deleting` or `Othe
 Textedit::History::Linear.new(graphemes, limit: 1000, window: 2.seconds)
 ```
 
-It ignores the commits its own undo and redo produce. A different kind of history includes `Textedit::History` and implements `record(commit)`, `undo`, `redo`, `can_undo?`, `can_redo?`, `modified?`, `mark_saved` and `clear`: for example one that keeps every commit, undo included, so no state is ever lost. `history: nil` turns undo off, and `document.history = …` swaps it on a live document.
+It ignores the commits its own undo and redo produce.
+
+#### Configurable grouping
+
+`History::Grouping` decides whether two adjacent commits form one undo step. Its `join?(previous, following, elapsed)` method can inspect both commits' gestures, origins, changes and carets. `Grouping::Adjacent` provides the standard time-window and word-start behavior; `Grouping::Never` gives every commit its own step. Both linear and tree histories accept a policy, and it can be replaced later:
+
+```crystal
+ungrouped = Textedit::History::Grouping::Never.new
+history   = Textedit::History::Linear.new(graphemes, grouping: ungrouped)
+
+history.grouping = Textedit::History::Grouping::Adjacent.new(graphemes, 2.seconds)
+```
+
+A host can include `History::Grouping` in its own type for command-, transaction- or language-aware grouping. Grouping applies only to subsequent commits.
+
+#### Branching history
+
+`History::Tree` preserves alternative redo paths. Undo followed by a new edit adds a branch instead of discarding the old one:
+
+```crystal
+history = Textedit::History::Tree.new(graphemes)
+editor  = Textedit::Editor.new(graphemes, source, history: history)
+
+editor.undo                         # return to a node with several children
+history.current.children           # branches available from this node
+history.choose(history.current.children.first)
+editor.redo                         # follow the chosen branch
+```
+
+`choose` accepts only an immediate child of `current`. Undo to the divergence point before choosing another branch. `root`, `current` and each node's `parent`, `children` and `commit` expose the tree for a history browser. Every node remains in memory until `clear`.
+
+#### Append-only and persistent history
+
+`History::Journal` combines a tree with an append-only event log. Unlike linear and tree histories, it retains the raw commits produced by undo and redo in `entries`, together with save points, clears and explicit branch choices:
+
+```crystal
+journal = Textedit::History::Journal.open(graphemes, "notes.history.jsonl")
+storage = Textedit::Storage.open(graphemes, "notes.txt", history: journal)
+editor  = Textedit::Editor.new(storage.document)
+```
+
+`Journal.new(graphemes)` makes an in-memory journal. With a path, every event is appended and flushed as one JSON object on its own line. Format version 1 stores an RFC 3339 UTC timestamp, the event kind, its optional commit, whether it joined its predecessor, and an optional chosen node ID. Grouping decisions are stored, so reloading does not depend on the currently configured policy.
+
+Opening an existing journal replays its events and save points. A malformed or inconsistent complete event raises `ArgumentError`; an incomplete trailing event is discarded after the valid prefix loads. `clear` appends a reset marker rather than deleting old events. The journal does not store document text, so open the text and history separately. Use one writer per journal file; entries and files grow until the host rotates them.
+
+A different kind of history includes `Textedit::History` and implements `record(commit)`, `undo`, `redo`, `can_undo?`, `can_redo?`, `modified?`, `mark_saved` and `clear`. `history: nil` turns undo off, and `document.history = …` swaps it on a live document.
 
 ### Marks
 

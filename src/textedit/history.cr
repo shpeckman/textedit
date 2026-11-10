@@ -33,7 +33,54 @@ module Textedit
     # Clears all retained history and resets its save point.
     abstract def clear : Nil
 
-    # Linear undo and redo stacks with time-window grouping for typing and deletion.
+    # Decides whether two adjacent commits belong to one undo step.
+    module Grouping
+      # Returns whether *following* joins *previous* after *elapsed* time.
+      abstract def join?(previous : Commit, following : Commit, elapsed : Time::Span) : Bool
+
+      # Groups adjacent typing and deletion within a time window, breaking typing at word starts.
+      class Adjacent
+        include Grouping
+
+        property window : Time::Span
+
+        # Creates the standard grouping policy using *graphemes* for word-boundary detection.
+        def initialize(@graphemes : Graphemes, @window : Time::Span = Linear::WINDOW)
+        end
+
+        def join?(previous : Commit, following : Commit, elapsed : Time::Span) : Bool
+          gesture = following.gesture
+          return false if gesture.other? || previous.gesture != gesture
+          return false if elapsed > @window
+          return false unless previous.after == following.before
+          return true unless gesture.typing?
+
+          earlier = previous.changes.last?.try(&.inserted) || return true
+          upcoming = following.changes.first?.try(&.inserted) || return true
+          return true if earlier.empty? || upcoming.empty?
+
+          !(blank?(earlier, last: true) && !blank?(upcoming, last: false))
+        end
+
+        private def blank?(text : String, last : Bool) : Bool
+          marks = @graphemes.boundaries(text)
+          start = last ? marks[-2] : 0
+          stop  = last ? marks[-1] : marks[1]
+          @graphemes.kind(text.to_slice[start, stop - start]).space?
+        end
+      end
+
+      # Policy that keeps every commit in a separate undo step.
+      struct Never
+        include Grouping
+
+        def join?(previous : Commit, following : Commit, elapsed : Time::Span) : Bool
+          false
+        end
+      end
+    end
+
+    # Linear undo and redo stacks with configurable commit grouping.
     class Linear
       include History
 
@@ -46,6 +93,7 @@ module Textedit
       class Step
         getter id              : Int32
         getter gesture         : Gesture
+        getter origin          : Origin
         getter changes         : Array(Change)
         getter before          : Array(Caret)
         getter before_primary  : Int32
@@ -53,13 +101,14 @@ module Textedit
         property after_primary : Int32
         property at            : Time::Instant
 
-        def initialize(@id : Int32, @gesture : Gesture, @changes : Array(Change), @before : Array(Caret),
+        def initialize(@id : Int32, @gesture : Gesture, @origin : Origin, @changes : Array(Change), @before : Array(Caret),
                        @before_primary : Int32, @after : Array(Caret), @after_primary : Int32, @at : Time::Instant)
         end
       end
 
-      property limit  : Int32
-      property window : Time::Span
+      property limit    : Int32
+      getter window     : Time::Span
+      property grouping : Grouping
 
       @undo   : Array(Step)
       @redo   : Array(Step)
@@ -67,14 +116,25 @@ module Textedit
       @saved  : Int32
       @sealed : Bool
 
-      # Creates a linear history with an optional injectable clock.
-      def initialize(@graphemes : Graphemes, @limit : Int32 = LIMIT, @window : Time::Span = WINDOW,
-                     @clock : Proc(Time::Instant) = -> { Time.instant })
-        @undo   = [] of Step
-        @redo   = [] of Step
-        @serial = 0
-        @saved  = -1
-        @sealed = false
+      # Creates a linear history with optional grouping and an injectable clock.
+      #
+      # By default, grouping uses `Grouping::Adjacent` with *window*. Supplying
+      # *grouping* replaces that policy while preserving *window* for later assignment.
+      def initialize(graphemes : Graphemes, @limit : Int32 = LIMIT, @window : Time::Span = WINDOW,
+                     @clock : Proc(Time::Instant) = -> { Time.instant }, grouping : Grouping? = nil)
+        @grouping = grouping || Grouping::Adjacent.new(graphemes, @window)
+        @undo     = [] of Step
+        @redo     = [] of Step
+        @serial   = 0
+        @saved    = -1
+        @sealed   = false
+      end
+
+      # Changes the default grouping window and updates an adjacent policy when installed.
+      def window=(value : Time::Span) : Time::Span
+        @window = value
+        @grouping.as?(Grouping::Adjacent).try { |policy| policy.window = value }
+        value
       end
 
       def can_undo? : Bool
@@ -116,7 +176,7 @@ module Textedit
 
         @sealed  = false
         @serial += 1
-        @undo << Step.new(@serial, commit.gesture, commit.changes.dup, commit.before, commit.before_primary,
+        @undo << Step.new(@serial, commit.gesture, commit.origin, commit.changes.dup, commit.before, commit.before_primary,
           commit.after, commit.after_primary, now)
         @undo.shift if @undo.size > @limit
       end
@@ -142,24 +202,9 @@ module Textedit
       end
 
       private def joins?(last : Step, commit : Commit, now : Time::Instant) : Bool
-        gesture = commit.gesture
-        return false if gesture.other? || last.gesture != gesture
-        return false if now - last.at > @window
-        return false unless last.after == commit.before
-        return true unless gesture.typing?
-
-        previous = last.changes.last?.try(&.inserted) || return true
-        upcoming = commit.changes.first?.try(&.inserted) || return true
-        return true if previous.empty? || upcoming.empty?
-
-        !(blank?(previous, last: true) && !blank?(upcoming, last: false))
-      end
-
-      private def blank?(text : String, last : Bool) : Bool
-        marks = @graphemes.boundaries(text)
-        start = last ? marks[-2] : 0
-        stop  = last ? marks[-1] : marks[1]
-        @graphemes.kind(text.to_slice[start, stop - start]).space?
+        previous = Commit.new(last.gesture, last.origin, last.changes, last.before, last.before_primary,
+          last.after, last.after_primary)
+        @grouping.join?(previous, commit, now - last.at)
       end
     end
   end
