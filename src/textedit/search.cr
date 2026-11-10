@@ -1,7 +1,10 @@
 # src/textedit/search.cr
 module Textedit
+  # Reusable literal or regular-expression query with configurable matching behavior.
   class Search
+    # :nodoc:
     REFERENCE = /\$(\$|\d+)/
+    # :nodoc:
     NO_RANGES = [] of Range(Int32, Int32)
 
     getter query           : String
@@ -17,6 +20,9 @@ module Textedit
     @lines      : Array(Array(Range(Int32, Int32))?)
     @line_local : Bool
 
+    # Creates a case-insensitive literal query by default.
+    #
+    # Invalid regular expressions leave the search inactive and set `#error`.
     def initialize(@query : String = "", *, @case_sensitive : Bool = false,
                    @whole_word : Bool = false, @regex : Bool = false)
       @pattern    = nil
@@ -29,6 +35,7 @@ module Textedit
       compile
     end
 
+    # Changes the query and recompiles its pattern.
     def query=(value : String) : String
       return value if value == @query
 
@@ -37,32 +44,38 @@ module Textedit
       value
     end
 
+    # Changes case sensitivity and recompiles the pattern.
     def case_sensitive=(value : Bool) : Bool
       @case_sensitive = value
       compile
       value
     end
 
+    # Enables or disables whole-word matching and recompiles the pattern.
     def whole_word=(value : Bool) : Bool
       @whole_word = value
       compile
       value
     end
 
+    # Switches between literal and regular-expression matching and recompiles the pattern.
     def regex=(value : Bool) : Bool
       @regex = value
       compile
       value
     end
 
+    # Returns whether a nonempty, valid pattern is ready to match.
     def active? : Bool
       !@pattern.nil?
     end
 
+    # :nodoc:
     def lined? : Bool
       @regex ? @line_local : !@query.includes?('\n')
     end
 
+    # Returns every match in *buffer* as an exclusive grapheme-cluster range.
     def matches(buffer : Buffer) : Array(Range(Int32, Int32))
       cached = @buffer
       return @found if cached && cached.same?(buffer) && @revision == buffer.revision
@@ -81,21 +94,25 @@ module Textedit
       @found
     end
 
+    # Returns the first match at or after *from*, wrapping to the first match.
     def next(buffer : Buffer, from : Int32) : Range(Int32, Int32)?
       found = matches(buffer)
       found.find { |range| range.begin >= from } || found.first?
     end
 
+    # Returns the last match before *from*, wrapping to the last match.
     def previous(buffer : Buffer, from : Int32) : Range(Int32, Int32)?
       found = matches(buffer)
       found.reverse_each { |range| return range if range.begin < from }
       found.last?
     end
 
+    # Returns the index of an exact match range, or `nil` when it is no longer present.
     def index(buffer : Buffer, range : Range(Int32, Int32)) : Int32?
       matches(buffer).index(range)
     end
 
+    # Expands `$1` capture references and `$$` in a replacement *template*.
     def expand(buffer : Buffer, range : Range(Int32, Int32), template : String) : String
       pattern = @pattern
       return template unless @regex && pattern

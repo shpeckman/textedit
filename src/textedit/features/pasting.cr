@@ -1,27 +1,34 @@
 # src/textedit/features/pasting.cr
 module Textedit
+  # Commands that cut and paste clipboard text or cycle paste history.
   enum Clip
     Cut
     Paste
     PastePrevious
 
+    # Returns `true`; clipboard editing commands may change text.
     def edits? : Bool
       true
     end
   end
 
+  # Cuts selections, pastes clipboard text, and cycles earlier clipboard entries.
+  #
+  # Include `Typing` and `Copying` before this module.
   module Pasting
     macro included
       {% raise "#{@type} must include Textedit::Typing before Textedit::Pasting" unless @type < ::Textedit::Typing %}
       {% raise "#{@type} must include Textedit::Copying before Textedit::Pasting" unless @type < ::Textedit::Copying %}
     end
 
+    # :nodoc:
     record Session, ranges : Array(Range(Int32, Int32)), revision : Int32,
       carets : Array(Caret), primary : Int32, index : Int32
 
     @paste_session : ::Textedit::Pasting::Session? = nil
     @paste_pending : Bool = false
 
+    # Runs a clipboard command and returns whether the command applied.
     def run(command : Clip, selecting : Bool = false) : Bool
       return false unless enter(command)
 

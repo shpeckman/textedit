@@ -1,21 +1,26 @@
 # src/textedit/features/boxing.cr
 module Textedit
+  # Commands that grow a rectangular selection from its head.
   enum Box
     Up
     Down
     Left
     Right
 
+    # Returns `false`; box-selection commands never change text.
     def edits? : Bool
       false
     end
   end
 
+  # Rectangular selection over layout rows and display columns.
   module Boxing
+    # Anchor row, anchor column, head row, and head column of a box selection.
     alias Corners = {Int32, Int32, Int32, Int32}
 
     getter box : ::Textedit::Boxing::Corners? = nil
 
+    # Grows the box in the requested direction.
     def run(command : Box, selecting : Bool = false) : Bool
       return false unless enter(command)
 
@@ -28,10 +33,12 @@ module Textedit
       true
     end
 
+    # Starts a box with both corners at a display cell.
     def start_box(row : Int32, column : Int32) : Nil
       @box = {row, column, row, column}
     end
 
+    # Selects a rectangle between two display cells.
     def select_box(anchor_row : Int32, anchor_column : Int32, head_row : Int32, head_column : Int32) : Nil
       @box = {anchor_row, anchor_column, head_row, head_column}
       low  = Math.min(anchor_row, head_row)
@@ -42,6 +49,7 @@ module Textedit
       place_carets(list, head_row - low)
     end
 
+    # Clears the stored box corners without changing the carets.
     def clear_box : Nil
       @box = nil
     end

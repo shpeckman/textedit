@@ -1,9 +1,15 @@
 # src/textedit/buffer.cr
 module Textedit
+  # Grapheme-cluster text storage with line, byte-offset, search, and revision operations.
+  #
+  # Text uses `\n` line breaks. Offsets count clusters unless a method names bytes.
   class Buffer
+    # :nodoc:
     BREAK   = "\n"
+    # :nodoc:
     JOURNAL = 256
 
+    # :nodoc:
     record Entry, revision : Int32, line : Int32, removed : Int32, inserted : Int32, change : Change
 
     getter graphemes : Graphemes
@@ -20,6 +26,7 @@ module Textedit
     @journal   : Deque(Entry)
     @listeners : Array(Proc(Change, Nil))
 
+    # Creates a buffer from *text*, split at `\n` line breaks.
     def initialize(@graphemes : Graphemes, text : String = "")
       @lines     = Buffer.split(text).map { |part| Line.new(part, @graphemes) }
       @rows      = Index.new(@lines.map { |line| line.size + 1 })
@@ -33,10 +40,12 @@ module Textedit
       @listeners = [] of Proc(Change, Nil)
     end
 
+    # :nodoc:
     def self.split(text : String) : Array(String)
       text.empty? ? [""] : text.split('\n')
     end
 
+    # :nodoc:
     def self.split(bytes : Bytes) : Array(String)
       return [""] if bytes.empty?
 
@@ -54,6 +63,7 @@ module Textedit
       found
     end
 
+    # :nodoc:
     def self.map(graphemes : Graphemes, path : String) : Buffer
       mapped = Mapped.new(path)
       begin
@@ -77,6 +87,7 @@ module Textedit
       end
     end
 
+    # :nodoc:
     def initialize(@graphemes : Graphemes, lines : Array(Line), @mapped : Mapped? = nil)
       @lines     = lines.empty? ? [Line.new("", nil)] : lines
       @rows      = Index.new(@lines.map { |line| line.size + 1 })
@@ -89,10 +100,12 @@ module Textedit
       @listeners = [] of Proc(Change, Nil)
     end
 
+    # Returns whether the buffer retains a file mapping.
     def mapped? : Bool
       !@mapped.nil?
     end
 
+    # :nodoc:
     def on_change(&block : Change -> Nil) : Proc(Nil)
       @listeners << block
       -> { @listeners.delete(block); nil }
@@ -106,51 +119,62 @@ module Textedit
       @lines.size
     end
 
+    # Returns the line at *index*.
     def line(index : Int32) : Line
       @lines[index]
     end
 
+    # Returns the cluster offset where a line starts.
     def line_start(index : Int32) : Int32
       @rows.prefix(index.clamp(0, @lines.size))
     end
 
+    # Returns the byte offset where a line starts.
     def line_byte(index : Int32) : Int32
       @bytes.prefix(index.clamp(0, @lines.size))
     end
 
+    # Returns the cluster offset at the end of a line, before its line break.
     def line_end(index : Int32) : Int32
       line_start(index) + @lines[index].size
     end
 
+    # Converts a cluster *offset* to a line and cluster column.
     def position(offset : Int32) : Position
       line, column = @rows.locate(offset.clamp(0, @size))
       Position.new(line, column)
     end
 
+    # Converts a byte offset to a line and line-relative byte column.
     def byte_position(byte : Int32) : Position
       line, column = @bytes.locate(byte.clamp(0, @bytesize))
       Position.new(line, column)
     end
 
+    # Converts a line and cluster column to a cluster offset, clamped to the buffer.
     def offset(line : Int32, column : Int32) : Int32
       line = line.clamp(0, @lines.size - 1)
       line_start(line) + column.clamp(0, @lines[line].size)
     end
 
+    # :ditto:
     def offset(position : Position) : Int32
       offset(position.line, position.column)
     end
 
+    # Converts a cluster *offset* to a point whose column uses *unit*.
     def point(offset : Int32, unit : Units) : Point
       found = position(offset)
       Point.new(found.line, @lines[found.line].units(unit, 0, found.column))
     end
 
+    # Converts *point* in *unit* to a cluster offset, rounding down inside a cluster.
     def offset_at(point : Point, unit : Units) : Int32
       line = point.line.clamp(0, @lines.size - 1)
       line_start(line) + @lines[line].column_for(point.column, unit)
     end
 
+    # Returns the size of *text* measured in *unit*.
     def measure(text : String, unit : Units) : Int32
       case unit
       in .clusters?    then text.empty? ? 0 : @graphemes.boundaries(text).size - 1
@@ -160,6 +184,7 @@ module Textedit
       end
     end
 
+    # Returns the cluster at *offset*, a line break, or `nil` outside the buffer.
     def cluster(offset : Int32) : String?
       return nil unless 0 <= offset < @size
 
@@ -168,6 +193,7 @@ module Textedit
       found.column < line.size ? line.cluster(found.column) : BREAK
     end
 
+    # Returns the host-defined kind of the cluster at *offset*.
     def kind(offset : Int32) : ClusterKind?
       return nil unless 0 <= offset < @size
 
@@ -176,12 +202,14 @@ module Textedit
       @graphemes.kind(found.column < line.size ? line.bytes(found.column) : BREAK.to_slice)
     end
 
+    # Returns the display width of a cluster range on *line*.
     def width(line : Int32, from : Int32 = 0, to : Int32 = Int32::MAX) : Int32
       total = 0
       @lines[line].each_cluster(from, to) { |bytes, _column| total += @graphemes.width(bytes) }
       total
     end
 
+    # Returns the number of whitespace clusters at the start of *line*.
     def leading(line : Int32) : Int32
       row    = @lines[line]
       column = 0
@@ -195,11 +223,13 @@ module Textedit
       leading(line) == @lines[line].size
     end
 
+    # Returns the leading whitespace width of *line*, or `nil` for a blank line.
     def indentation(line : Int32) : Int32?
       column = leading(line)
       column == @lines[line].size ? nil : width(line, 0, column)
     end
 
+    # Returns the cluster column at or before display *width* on *line*.
     def index(line : Int32, width : Int32, from : Int32 = 0, to : Int32 = Int32::MAX) : Int32
       row    = @lines[line]
       stop   = to.clamp(0, row.size)
@@ -214,6 +244,7 @@ module Textedit
       Math.min(column, stop)
     end
 
+    # Returns the complete text with `\n` line breaks.
     def text : String
       @text ||= String.build do |io|
         @lines.each_with_index do |line, index|
@@ -223,6 +254,7 @@ module Textedit
       end
     end
 
+    # Returns text in an exclusive cluster *range*, clamped to the buffer.
     def slice_text(range : Range(Int32, Int32)) : String
       from = range.begin.clamp(0, @size)
       to   = range.end.clamp(from, @size)
@@ -246,17 +278,20 @@ module Textedit
       end
     end
 
+    # Converts a cluster offset to a byte offset.
     def byte_offset(offset : Int32) : Int32
       found = position(offset)
       line_byte(found.line) + @lines[found.line].byte_at(found.column)
     end
 
+    # Converts a byte offset to a cluster offset, optionally rounding up inside a cluster.
     def offset_at_byte(byte : Int32, ceil : Bool = false) : Int32
       found = byte_position(byte)
       row   = @lines[found.line]
       line_start(found.line) + row.column_at(found.column.clamp(0, row.bytesize), ceil)
     end
 
+    # Returns text between two byte offsets, clamped to the buffer.
     def byte_text(from : Int32, to : Int32) : String
       from = from.clamp(0, @bytesize)
       to   = to.clamp(from, @bytesize)
@@ -283,6 +318,9 @@ module Textedit
       end
     end
 
+    # Returns the remainder of the line containing *byte* as contiguous bytes.
+    #
+    # Returns `"\n"` at a line end and an empty slice outside the buffer.
     def chunk(byte : Int32) : Bytes
       return Bytes.empty unless 0 <= byte < @bytesize
 
@@ -293,6 +331,7 @@ module Textedit
       row.to_slice[found.column, row.bytesize - found.column]
     end
 
+    # Yields the remainder of the line containing *byte* as contiguous pieces.
     def each_chunk(byte : Int32, & : Bytes -> Nil) : Nil
       return unless 0 <= byte < @bytesize
 
@@ -305,6 +344,7 @@ module Textedit
       end
     end
 
+    # Finds the next literal *needle*, wrapping around, and returns its cluster range.
     def find(needle : String, from : Int32 = 0) : Range(Int32, Int32)?
       return nil if needle.empty? || needle.bytesize > @bytesize
 
@@ -315,6 +355,7 @@ module Textedit
       nil
     end
 
+    # Returns every non-overlapping literal match as a cluster range.
     def find_all(needle : String) : Array(Range(Int32, Int32))
       found = [] of Range(Int32, Int32)
       return found if needle.empty? || needle.bytesize > @bytesize
@@ -452,6 +493,7 @@ module Textedit
       end
     end
 
+    # :nodoc:
     def journal_since(revision : Int32) : Array(Entry)?
       return [] of Entry if revision == @revision
       return nil if revision > @revision
@@ -461,10 +503,13 @@ module Textedit
       @journal.select { |entry| entry.revision > revision }
     end
 
+    # Returns changes since *revision*, or `nil` when they are no longer retained.
     def changes_since(revision : Int32) : Array(Change)?
       journal_since(revision).try(&.map(&.change))
     end
 
+    # :nodoc:
+    # Use `Document#apply`, `Document#replace_ranges`, or `Document#assign` instead.
     def replace(range : Range(Int32, Int32), text : String) : Change
       from  = range.begin.clamp(0, @size)
       to    = range.end.clamp(from, @size)

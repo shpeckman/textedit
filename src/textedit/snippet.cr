@@ -1,19 +1,28 @@
 # src/textedit/snippet.cr
 module Textedit
+  # Live snippet tabstops held by document marks.
   class Snippet
+    # One tabstop span in a parsed template, using grapheme-cluster offsets.
     record Span, index : Int32, from : Int32, to : Int32
+
+    # Plain snippet text and the tabstop spans within it.
     record Template, text : String, spans : Array(Span)
 
+    # :nodoc:
     FINAL = 0
 
     getter document : Document
+    # :nodoc:
     getter stops    : Array(Array({Mark, Mark}))
+    # Zero-based index of the current stop group.
     getter index    : Int32
 
+    # Parses LSP-style snippet syntax into plain text and grapheme-cluster stop spans.
     def self.parse(source : String, graphemes : Graphemes) : Template
       Parser.new(source).run(graphemes)
     end
 
+    # :nodoc:
     def initialize(@document : Document, start : Int32, template : Template)
       groups = {} of Int32 => Array(Span)
       template.spans.each { |span| (groups[span.index] ||= [] of Span) << span }
@@ -35,26 +44,31 @@ module Textedit
       @stops.empty?
     end
 
+    # Returns whether a tabstop remains active.
     def active? : Bool
       @index < @stops.size && !@stops.empty?
     end
 
+    # :nodoc:
     def carets : Array(Caret)
       return [] of Caret unless 0 <= @index < @stops.size
 
       @stops[@index].map { |(from, to)| Caret.new(from.offset, Math.max(to.offset, from.offset)) }
     end
 
+    # Selects the next stop in *view*, closing after the final stop and returning `false`.
     def next_stop(view : View) : Bool
       seek(view, @index + 1)
     end
 
+    # Selects the previous stop in *view* and returns whether one existed.
     def previous_stop(view : View) : Bool
       return false if @index <= 0
 
       seek(view, @index - 1)
     end
 
+    # Releases all tabstop marks and deactivates the snippet.
     def close : Nil
       @stops.each { |group| group.each { |(from, to)| @document.unmark(from); @document.unmark(to) } }
       @stops = [] of Array({Mark, Mark})

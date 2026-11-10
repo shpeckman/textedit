@@ -1,8 +1,10 @@
 # src/textedit/features/folding.cr
 module Textedit
+  # Gives a view its own collapsible line ranges.
   module Folding
     @folds : ::Textedit::Folds? = nil
 
+    # Returns the view's folds, creating and attaching them to the layout on first use.
     def folds : Folds
       found = @folds
       return found if found
@@ -13,6 +15,7 @@ module Textedit
       made
     end
 
+    # Returns the existing folds without creating them.
     def folds? : Folds?
       @folds
     end
@@ -22,6 +25,7 @@ module Textedit
       super
     end
 
+    # Moves carets on hidden lines to the end of the visible line above.
     def lift_carets : Bool
       found = @folds || return false
       moved = false

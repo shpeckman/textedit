@@ -1,5 +1,6 @@
 # src/textedit/features/deleting.cr
 module Textedit
+  # Commands that delete selections or text around each caret.
   enum Deletion
     Backward
     Forward
@@ -10,12 +11,15 @@ module Textedit
     ToRowStart
     ToRowEnd
 
+    # Returns `true`; deletion commands change text.
     def edits? : Bool
       true
     end
   end
 
+  # Deletes selections, clusters, words, subwords, and text to row boundaries.
   module Deleting
+    # Runs a deletion command and returns `true`, including when nothing was deleted.
     def run(command : Deletion, selecting : Bool = false) : Bool
       return false unless enter(command)
 

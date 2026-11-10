@@ -1,5 +1,6 @@
 # src/textedit/features/transforming.cr
 module Textedit
+  # Commands that transform selections or lines under the carets.
   enum Transform
     DuplicateSelection
     Sort
@@ -11,12 +12,15 @@ module Textedit
     LowerCase
     TitleCase
 
+    # Returns `true`; transform commands change text.
     def edits? : Bool
       true
     end
   end
 
+  # Duplicates, sorts, joins, trims, and changes the case of text.
   module Transforming
+    # Runs a transform command and returns whether it changed text or carets.
     def run(command : Transform, selecting : Bool = false) : Bool
       return false unless enter(command)
 
@@ -33,6 +37,7 @@ module Textedit
       end
     end
 
+    # Wraps each nonempty selection in the pair beginning with *opener*.
     def surround(opener : String) : Bool
       closer = Brackets::PAIRS[opener]? || return false
 
@@ -43,6 +48,7 @@ module Textedit
       end
     end
 
+    # Removes a matching bracket or quote pair around each selection.
     def unsurround : Bool
       @document.apply(self, Gesture::Other) do |caret, _index|
         next nil if caret.range.size < 2

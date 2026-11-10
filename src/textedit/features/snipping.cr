@@ -1,6 +1,10 @@
 # src/textedit/features/snipping.cr
 module Textedit
+  # Inserts LSP-style snippets and navigates their tabstops.
   module Snipping
+    # Replaces the primary selection with a snippet and selects its first stop.
+    #
+    # Returns `nil` when the edit is refused or the snippet has no stops.
     def insert_snippet(source : String) : Snippet?
       template = Snippet.parse(@document.prepare(source), @graphemes)
       start    = primary_caret.start

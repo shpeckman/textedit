@@ -1,24 +1,41 @@
 # src/textedit/layout.cr
 module Textedit
+  # Converts between grapheme offsets and display rows and columns.
   module Layout
+    # Returns the number of visible display rows.
     abstract def row_count : Int32
+
+    # Returns the display row containing *offset*.
     abstract def row_of(offset : Int32) : Int32
+
+    # Returns the first grapheme offset in *row*.
     abstract def row_start(row : Int32) : Int32
+
+    # Returns the grapheme offset at the end of *row*, before a following line break.
     abstract def row_end(row : Int32) : Int32
+
+    # Returns the display cell for *offset*.
     abstract def cell_of(offset : Int32) : Cell
+
+    # Returns the grapheme offset at a display row and column.
     abstract def offset_in(row : Int32, column : Int32) : Int32
+
+    # Returns the number of rows moved by a page command.
     abstract def page_rows : Int32
 
+    # Receives the view's folds; the default ignores them.
     def folds=(folds : Folds?) : Folds?
       folds
     end
   end
 
+  # Layout with one display row per visible line and no wrapping.
   class LineLayout
     include Layout
 
     property folds : Folds?
 
+    # Creates a line layout over *buffer*, optionally hiding lines in *folds*.
     def initialize(@buffer : Buffer, @folds : Folds? = nil)
     end
 

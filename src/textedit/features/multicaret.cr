@@ -1,5 +1,6 @@
 # src/textedit/features/multicaret.cr
 module Textedit
+  # Commands that add, remove, or move between multiple carets.
   enum Carets
     Collapse
     AddNextOccurrence
@@ -10,12 +11,15 @@ module Textedit
     AddPerLine
     RemoveLast
 
+    # Returns `false`; caret commands never change text.
     def edits? : Bool
       false
     end
   end
 
+  # Manages multiple carets and selections by rows, lines, and occurrences.
   module Multicaret
+    # Runs a caret command and returns whether it changed the carets.
     def run(command : Carets, selecting : Bool = false) : Bool
       return false unless enter(command)
 
@@ -32,6 +36,7 @@ module Textedit
       true
     end
 
+    # Removes every caret except the primary caret.
     def collapse : Bool
       return false unless multiple?
 
@@ -39,6 +44,7 @@ module Textedit
       true
     end
 
+    # Removes the primary caret and makes the preceding caret primary.
     def remove_last_caret : Bool
       return false unless multiple?
 
@@ -48,6 +54,7 @@ module Textedit
       true
     end
 
+    # Selects the word under an empty primary caret or adds its next occurrence.
     def add_next_occurrence : Bool
       lead = primary_caret
 
@@ -66,6 +73,7 @@ module Textedit
       true
     end
 
+    # Replaces the primary selection with its next occurrence.
     def skip_occurrence : Bool
       lead = primary_caret
       return false if lead.empty?
@@ -78,6 +86,7 @@ module Textedit
       true
     end
 
+    # Selects every occurrence of the primary selection or word under the caret.
     def select_all_occurrences : Bool
       lead = primary_caret.range
 
@@ -92,6 +101,7 @@ module Textedit
       true
     end
 
+    # Places a caret at the end of every line touched by a multiline selection.
     def add_caret_per_line : Bool
       spread = [] of Caret
 

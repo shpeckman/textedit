@@ -1,6 +1,8 @@
 # src/textedit/features/finding.cr
 module Textedit
+  # Selects search matches and places carets on matches.
   module Finding
+    # Selects and returns the next or previous match, or `nil` when none exists.
     def find(search : Search, backward : Bool = false, from : Int32? = nil) : Range(Int32, Int32)?
       lead  = primary_caret
       start = from || (lead.empty? ? lead.head : lead.start + 1)
@@ -9,6 +11,7 @@ module Textedit
       found
     end
 
+    # Selects every match and returns whether at least one was found.
     def add_caret_at_every_match(search : Search) : Bool
       found = search.matches(@buffer)
       return false if found.empty?

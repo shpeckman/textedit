@@ -1,8 +1,12 @@
 # src/textedit/features/typing.cr
 module Textedit
+  # Inserts and pastes text at every caret, with optional automatic bracket pairing.
   module Typing
     property? auto_close : Bool = false
 
+    # Inserts filtered *text* at every caret and returns whether text changed.
+    #
+    # Automatic pairing applies only to single opening or closing characters.
     def insert(text : String) : Bool
       typed(text)
       prepared = @document.prepare(text)
@@ -13,6 +17,9 @@ module Textedit
       put(prepared)
     end
 
+    # Pastes *text* without automatic pairing.
+    #
+    # With multiple carets and a matching number of lines, pastes one line per caret.
     def paste(text : String) : Bool
       normal = LineEnding.normalize(text)
       parts  = normal.chomp.split('\n')

@@ -1,9 +1,12 @@
 # src/textedit/filter.cr
 module Textedit
+  # Transforms incoming text before it enters a document.
   module Filter
+    # Returns the accepted form of *text*.
     abstract def filter(text : String) : String
   end
 
+  # Filter that replaces line breaks and tabs with spaces and removes other control characters.
   struct SingleLine
     include Filter
 
@@ -22,11 +25,13 @@ module Textedit
     end
   end
 
+  # Filter that preserves line breaks and replaces tabs with a configured string.
   struct MultiLine
     include Filter
 
     getter tab : String
 
+    # Creates a multiline filter that replaces each tab with *tab*.
     def initialize(@tab : String = " ")
     end
 

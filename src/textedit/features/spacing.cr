@@ -1,14 +1,17 @@
 # src/textedit/features/spacing.cr
 module Textedit
+  # Commands that insert line breaks and indentation.
   enum Whitespace
     NewLine
     Tab
 
+    # Returns `true`; whitespace commands change text.
     def edits? : Bool
       true
     end
   end
 
+  # Inserts newlines and style-defined indentation, with optional automatic indentation.
   module Spacing
     macro included
       {% raise "#{@type} must include Textedit::Spacing before Textedit::LineEditing" if @type < ::Textedit::LineEditing %}
@@ -16,6 +19,7 @@ module Textedit
 
     property? auto_indent : Bool = false
 
+    # Runs a whitespace command and returns whether it applied.
     def run(command : Whitespace, selecting : Bool = false) : Bool
       return false unless enter(command)
 

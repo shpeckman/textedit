@@ -1,6 +1,10 @@
 # src/textedit/line.cr
 module Textedit
+  # One UTF-8 line with grapheme-cluster boundaries and byte-offset conversion.
+  #
+  # Cluster bytes remain slices of the underlying storage where possible.
   class Line
+    # :nodoc:
     CHUNK = 64 * 1024
 
     getter size : Int32
@@ -17,6 +21,7 @@ module Textedit
     @mixed       : Bool
     @chunk       : Int32
 
+    # Builds a line from *text* using *graphemes* for segmentation.
     def self.new(text : String, graphemes : Graphemes, chunk : Int32 = CHUNK) : Line
       chunk = Math.max(chunk, 1)
       marks = text.ascii_only? ? nil : graphemes.boundaries(text)
@@ -26,6 +31,7 @@ module Textedit
       new(pieces, local, nil, false, chunk, [text])
     end
 
+    # Builds a line from UTF-8 *bytes*, optionally retaining their mapped *owner*.
     def self.new(bytes : Bytes, graphemes : Graphemes, owner : Mapped? = nil, chunk : Int32 = CHUNK) : Line
       chunk = Math.max(chunk, 1)
       marks = bytes.all? { |byte| byte < 0x80 } ? nil : graphemes.boundaries(bytes)
@@ -35,6 +41,7 @@ module Textedit
       new(pieces, local, owner, false, chunk, [] of String)
     end
 
+    # :nodoc:
     def initialize(text : String, @marks : Array(Int32)?, @chunk : Int32 = CHUNK)
       @storage     = text.to_slice
       @text        = text
@@ -48,6 +55,7 @@ module Textedit
       @mixed       = false
     end
 
+    # :nodoc:
     def initialize(@storage : Bytes, @marks : Array(Int32)?, @owner : Mapped?, @chunk : Int32 = CHUNK)
       @text        = nil
       @size        = (found = @marks) ? found.size - 1 : @storage.size
@@ -98,6 +106,7 @@ module Textedit
       {pieces, local}
     end
 
+    # :nodoc:
     def self.splice(first : Line, head : Int32, last : Line, tail : Int32, text : String,
                     graphemes : Graphemes) : Line
       unless first.ascii? && last.ascii? && text.ascii_only?
@@ -131,18 +140,21 @@ module Textedit
         true, first.@chunk, owners)
     end
 
+    # Returns the complete line as a string, without a line break.
     def text : String
       @text ||= String.build(bytesize) do |io|
         each_chunk { |piece, _start| io.write(piece) }
       end
     end
 
+    # Returns the complete line as contiguous UTF-8 bytes.
     def to_slice : Bytes
       return @storage if @pieces.empty?
 
       @storage = text.to_slice
     end
 
+    # Yields contiguous byte slices and their line-relative byte offsets.
     def each_chunk(from : Int32 = 0, to : Int32 = bytesize, & : Bytes, Int32 -> Nil) : Nil
       from = from.clamp(0, bytesize)
       to   = to.clamp(from, bytesize)
@@ -167,6 +179,7 @@ module Textedit
       end
     end
 
+    # Returns the byte at *index*, or `nil` when outside the line.
     def byte(index : Int32) : UInt8?
       return nil unless 0 <= index < bytesize
       return @storage.unsafe_fetch(index) if @pieces.empty?
@@ -175,14 +188,17 @@ module Textedit
       @pieces[piece].unsafe_fetch(local)
     end
 
+    # Returns whether the line remains wholly backed by a read-only mapping.
     def mapped? : Bool
       !@mixed && !@owner.nil?
     end
 
+    # Returns whether the line is stored as multiple immutable pieces.
     def chunked? : Bool
       !@pieces.empty?
     end
 
+    # Returns whether every byte is ASCII, allowing byte and cluster columns to coincide.
     def ascii? : Bool
       @pieces.empty? ? @marks.nil? : @piece_marks.all?(&.nil?)
     end
@@ -195,6 +211,9 @@ module Textedit
       @pieces.empty? ? @storage.size : @bytes.not_nil!.total
     end
 
+    # Returns the byte offset of a cluster boundary.
+    #
+    # The column must be between zero and `#size`, inclusive.
     def boundary(column : Int32) : Int32
       if @pieces.empty?
         (found = @marks) ? found.unsafe_fetch(column) : column
@@ -206,10 +225,12 @@ module Textedit
       end
     end
 
+    # Returns the byte offset for *column*, clamped to the line.
     def byte_at(column : Int32) : Int32
       boundary(column.clamp(0, @size))
     end
 
+    # Returns the cluster column containing *byte*, or the following column when *ceil* is true.
     def column_at(byte : Int32, ceil : Bool = false) : Int32
       if @pieces.empty?
         found = @marks || return byte.clamp(0, @size)
@@ -232,6 +253,7 @@ module Textedit
       @rows.not_nil!.prefix(piece) + column
     end
 
+    # Returns the UTF-8 bytes of the cluster at *column* without allocating a string.
     def bytes(column : Int32) : Bytes
       if @pieces.empty?
         start = boundary(column)
@@ -245,14 +267,17 @@ module Textedit
       @pieces[piece][start, stop - start]
     end
 
+    # Returns the cluster at *column* as a newly allocated string.
     def cluster(column : Int32) : String
       String.new(bytes(column))
     end
 
+    # Returns the first character of the cluster at *column*.
     def char(column : Int32) : Char
       Char::Reader.new(bytes(column)).current_char
     end
 
+    # Returns text between two cluster columns, clamped to the line.
     def slice(from : Int32 = 0, to : Int32 = size) : String
       from = from.clamp(0, @size)
       to   = to.clamp(from, @size)
@@ -261,12 +286,14 @@ module Textedit
       end
     end
 
+    # Returns clusters between two columns as newly allocated strings.
     def clusters(from : Int32 = 0, to : Int32 = size) : Array(String)
       from = from.clamp(0, @size)
       to   = to.clamp(from, @size)
       Array(String).new(to - from) { |index| cluster(from + index) }
     end
 
+    # Yields each cluster's bytes and column without allocating cluster strings.
     def each_cluster(from : Int32 = 0, to : Int32 = size, & : Bytes, Int32 ->) : Nil
       from = from.clamp(0, @size)
       to   = to.clamp(from, @size)
@@ -299,6 +326,7 @@ module Textedit
       end
     end
 
+    # Returns the size of a cluster range measured in *unit*.
     def units(unit : Units, from : Int32 = 0, to : Int32 = size) : Int32
       from = from.clamp(0, @size)
       to   = to.clamp(from, @size)
@@ -328,6 +356,7 @@ module Textedit
       total
     end
 
+    # Returns the cluster column at or before *amount* measured in *unit*.
     def column_for(amount : Int32, unit : Units) : Int32
       return amount.clamp(0, @size) if unit.clusters? || ascii?
       return column_at(amount.clamp(0, bytesize)) if unit.bytes?
@@ -366,6 +395,7 @@ module Textedit
       column
     end
 
+    # :nodoc:
     def starts_with?(prefix : String, column : Int32 = 0) : Bool
       start = byte_at(column)
       return false if start + prefix.bytesize > bytesize

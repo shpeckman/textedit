@@ -6,8 +6,8 @@ authors:
   - shpeckman
 
 description: |
-  A multi-caret text editing model for Crystal: a grapheme buffer, undo history, search, highlighting and
-  editing commands, driven through interfaces the host implements.
+  A multi-caret text editing model for Crystal: a grapheme buffer, undo history, search, syntax-token
+  interfaces and editing commands, driven through interfaces the host implements.
 
 crystal: ">= 1.21.0"
 

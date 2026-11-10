@@ -1,5 +1,6 @@
 # src/textedit/features/selecting.cr
 module Textedit
+  # Commands that expand selections to text objects.
   enum Selection
     All
     Word
@@ -9,12 +10,15 @@ module Textedit
     InsideQuotes
     AroundQuotes
 
+    # Returns `false`; selection commands never change text.
     def edits? : Bool
       false
     end
   end
 
+  # Selects documents, words, lines, brackets, and quoted text.
   module Selecting
+    # Runs a selection command and returns whether it found its target.
     def run(command : Selection, selecting : Bool = false) : Bool
       return false unless enter(command)
 
@@ -30,11 +34,13 @@ module Textedit
       true
     end
 
+    # Selects the entire document.
     def select_all : Nil
       select_range(0, length)
       selected
     end
 
+    # Selects the word under every caret that has one.
     def select_word : Nil
       list = @carets.map do |caret|
         span = word_at(caret.head)
@@ -44,6 +50,7 @@ module Textedit
       selected
     end
 
+    # Selects every line touched by a caret or selection.
     def select_line : Nil
       list = @carets.map do |caret|
         first = @buffer.position(caret.start).line
@@ -57,6 +64,7 @@ module Textedit
       selected
     end
 
+    # Returns offsets of the bracket pair beside the empty primary caret.
     def brackets : {Int32, Int32}?
       lead = primary_caret
       return nil unless lead.empty?

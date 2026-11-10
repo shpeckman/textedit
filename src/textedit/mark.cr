@@ -1,9 +1,13 @@
 # src/textedit/mark.cr
 module Textedit
+  # A grapheme-cluster offset that follows document edits according to its `Gravity`.
+  #
+  # Prefer `Document#mark`, which registers the mark for automatic updates.
   class Mark
     getter offset  : Int32
     getter gravity : Gravity
 
+    # Creates a mark at *offset* with the given *gravity*.
     def initialize(@offset : Int32, @gravity : Gravity = Gravity::Left)
     end
 

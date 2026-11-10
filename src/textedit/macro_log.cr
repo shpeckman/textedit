@@ -1,5 +1,6 @@
 # src/textedit/macro_log.cr
 module Textedit
+  # Commands and inserted text captured by a `Recording` view.
   class MacroLog(C)
     getter entries : Array(C | String)
     getter? recording : Bool
@@ -11,6 +12,7 @@ module Textedit
       @replaying = false
     end
 
+    # Starts recording into a new, empty log unless replay is active.
     def record : Nil
       return if @replaying
 
@@ -18,6 +20,7 @@ module Textedit
       @recording = true
     end
 
+    # Stops recording while retaining the entries.
     def stop : Nil
       @recording = false
     end
@@ -30,6 +33,7 @@ module Textedit
       @entries.size
     end
 
+    # :nodoc:
     def push(entry : C | String) : Nil
       return unless @recording && !@replaying
 

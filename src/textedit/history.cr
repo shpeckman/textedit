@@ -1,26 +1,48 @@
 # src/textedit/history.cr
 module Textedit
+  # One document mutation delivered to a `History`, including carets around the edit.
   record Commit, gesture : Gesture, origin : Origin, changes : Array(Change),
     before : Array(Caret), before_primary : Int32, after : Array(Caret), after_primary : Int32
 
+  # Stores document commits and supplies reversible edits for undo and redo.
   module History
+    # Edits to apply in order and carets to seat after an undo or redo.
     record Restore, edits : Array(Edit), carets : Array(Caret), primary : Int32
 
+    # Records one completed document commit.
     abstract def record(commit : Commit) : Nil
+
+    # Removes and returns the next undo restoration, or `nil` when unavailable.
     abstract def undo : Restore?
+
+    # Removes and returns the next redo restoration, or `nil` when unavailable.
     abstract def redo : Restore?
+
+    # Returns whether an undo step is available.
     abstract def can_undo? : Bool
+
+    # Returns whether a redo step is available.
     abstract def can_redo? : Bool
+
+    # Returns whether the current position differs from the save point.
     abstract def modified? : Bool
+
+    # Marks the current history position as saved.
     abstract def mark_saved : Nil
+
+    # Clears all retained history and resets its save point.
     abstract def clear : Nil
 
+    # Linear undo and redo stacks with time-window grouping for typing and deletion.
     class Linear
       include History
 
+      # Default maximum number of retained undo steps.
       LIMIT  = 500
+      # Default time window for grouping adjacent typing or deletion.
       WINDOW = 1.second
 
+      # :nodoc:
       class Step
         getter id              : Int32
         getter gesture         : Gesture
@@ -45,6 +67,7 @@ module Textedit
       @saved  : Int32
       @sealed : Bool
 
+      # Creates a linear history with an optional injectable clock.
       def initialize(@graphemes : Graphemes, @limit : Int32 = LIMIT, @window : Time::Span = WINDOW,
                      @clock : Proc(Time::Instant) = -> { Time.instant })
         @undo   = [] of Step

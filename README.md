@@ -80,7 +80,7 @@ Four ready-made views cover the common widgets. Each one declares its command un
 | `Field` | `Typing`, `Deleting`, `Selecting`, `Copying`, `Pasting`, `Undoing`, `Recalling` | `SingleLine` filter, `History::Linear` |
 | `Area` | `Field`'s except `Recalling`, plus `Spacing` and `Multicaret` | `MultiLine` filter, `History::Linear` |
 | `Reader` | `Selecting`, `Multicaret`, `Copying`, `Finding`, `Folding` | `MultiLine` filter, no history |
-| `Editor` | every feature | `MultiLine` filter, `History::Linear` |
+| `Editor` | `Area`'s features, plus `LineEditing`, `Transforming`, `Boxing`, `Finding`, `Replacing`, `Folding`, `Snipping` and `Recording` | `MultiLine` filter, `History::Linear` |
 
 ```crystal
 name   = Textedit::Field.new(graphemes, "hello", constraints: [Textedit::MaxLength.new(40)])
@@ -374,7 +374,7 @@ The host plugs in through these modules. Each is small, and all but `Graphemes` 
 
 ## Buffer and changes
 
-`document.buffer` stores each line as UTF-8 bytes with its cluster boundaries, and keeps line offsets in a `Textedit::Index`: lines in blocks, with a Fenwick tree over the block sums. String-backed lines retain their string; mapped lines retain the mapping and materialize `text` only on demand. Finding a line, its start, or the line of an offset is logarithmic in the number of blocks plus a scan inside one, and inserting or removing a line costs the same instead of rebuilding the whole index. On a million-line document, 200 edits that each add a line take about 76 ms rather than 1.3 s. A line whose bytes are all ASCII keeps no boundary table at all — its columns are its byte offsets — so ordinary source code costs nothing per cluster; `line.ascii?` says which kind a line is. Lines over 64 KiB use immutable, cluster-aligned pieces; `line.chunked?` reports this. Ordinary ASCII splices share unchanged pieces without flattening the line. Host-defined Unicode segmentation can still require a full-line boundary rebuild. Searching is line by line and never builds the whole text.
+`document.buffer` stores UTF-8 lines with their grapheme-cluster boundaries and converts between lines, cluster offsets and byte offsets. String-backed lines retain their string; mapped lines retain the mapping and materialize `text` only on demand. A line whose bytes are all ASCII maps byte and cluster columns directly; `line.ascii?` reports this. Lines over 64 KiB use cluster-aligned pieces, reported by `line.chunked?`. `each_chunk` reads those pieces without flattening the line. Host-defined Unicode segmentation can require a boundary rebuild after an edit.
 
 ```crystal
 buffer = text.buffer
@@ -394,7 +394,7 @@ buffer.revision              # how many edits the buffer has seen
 buffer.changes_since(7)      # the Changes since a revision, or nil when the journal does not reach back
 ```
 
-Line byte offsets are kept in a second Fenwick tree, so moving between cluster offsets and UTF-8 byte offsets is logarithmic too. This is what parsers and language servers that count bytes need:
+Byte offsets are available alongside cluster offsets for parsers and language servers that count bytes:
 
 ```crystal
 buffer.bytesize              # the text's size in bytes, with \n line breaks
@@ -480,7 +480,7 @@ folds.clear
 view.lift_carets             # moves carets on hidden lines to the end of the visible line above; false when none was hidden
 ```
 
-`LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` counts fold, unfold, collapse and expand calls, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
+`LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` increments after fold-set mutations, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
 
 ## Snippets
 
@@ -503,13 +503,13 @@ snippet.close               # drops its marks
 
 ## Diffing
 
-`Textedit.diff` turns an old and a new text into the smallest set of line edits, for `replace_ranges`:
+`Textedit.diff` turns an old and a new text into line-oriented edits, for `replace_ranges`:
 
 ```crystal
 view.replace_ranges(Textedit.diff(view.value, formatted, graphemes))
 ```
 
-The carets, marks, decorations and annotations outside the changed lines stay where they are, which is what `value=` cannot do. It is a Myers line diff with common ends trimmed; past `limit` lines of difference it falls back to one edit covering the changed region.
+The carets, marks, decorations and annotations outside the changed lines stay where they are, which is what `value=` cannot do. Common leading and trailing lines stay untouched; past `limit` lines of difference it falls back to one edit covering the changed region.
 
 ## Opening and saving a file
 
@@ -531,7 +531,7 @@ storage.export               # the text with the document's line ending
 Textedit::Storage.new(document, "notes.txt", final_newline: true)   # for a document built from text
 ```
 
-`Storage.open` takes the `Document` options as well. `save` writes through a writable mapping of a temporary file in the destination directory, closes it, then renames it over the destination. The live source mapping is never truncated, and a failed save leaves the destination and the document's save point unchanged. Existing destination permissions are preserved. Saving without a path requires an explicit one.
+`Storage.open` takes the `Document` options as well. `save` writes atomically and preserves existing destination permissions. The live source mapping is never truncated, and a failed save leaves the destination, path and document's save point unchanged. Saving without a path requires an explicit one.
 
 `Textedit::Mapped` is the mapping itself, for a host that wants the bytes:
 
@@ -562,7 +562,7 @@ document.map(range, mark)     # a range, which does not grow at its edges
 
 ## Find and replace
 
-`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are cluster ranges, cached until the buffer changes. Literal searches and regular expressions proved unable to consume a line break keep matches per line and, after an edit, rescan only the lines the edit touched. Multiline-capable or uncertain regular expressions retain the whole-text rescan. `Finding` selects matches; `Replacing` changes them.
+`Search` finds matches in a buffer, case-insensitively by default, with optional whole-word and regular-expression modes. Matches are grapheme-cluster ranges, and multiline-capable regular expressions can match across line breaks. `Finding` selects matches; `Replacing` changes them.
 
 ```crystal
 search = Textedit::Search.new("(\\w+)=(\\d)", regex: true)
@@ -647,6 +647,7 @@ A replay records nothing itself, and each pass is one undo step. `editor.macros 
 
 ```sh
 crystal spec
+crystal docs
 ```
 
 The specs drive the presets directly, with a small `Graphemes` built on the standard library in `spec/spec_helper.cr`. `History::Linear` takes an optional clock, which the specs use instead of sleeping.

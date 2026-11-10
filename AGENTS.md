@@ -17,7 +17,7 @@ Orientation for AI agents working on this repository.
 - `src/textedit/caret.cr`, `change.cr`, `mark.cr` — caret ranges with an optional goal column, one reversible replacement (with its start and end points in any unit), and offsets that follow changes.
 - `src/textedit/brackets.cr` — `Brackets`: the shared pair tables (`PAIRS`, `CLOSING`, `OPENERS`, `CLOSERS`) and the scan `REACH` that typing, deleting, transforms and selection all read.
 - `src/textedit/decoration.cr`, `annotation.cr` — `Decoration` and `Annotation` values, and the `Decorations` and `Annotations` stores: `Follower`s made for one document, replaced per source, with `entries`, `between`, `at` (and `on` for annotations), proc `listen` and `close`.
-- `src/textedit/folds.cr` — `Folds`: collapsible line ranges held by document marks, owned by a view that includes `Folding`; `LineLayout` consults them so motion skips hidden lines; `revision` moves on every fold, unfold, collapse and expand.
+- `src/textedit/folds.cr` — `Folds`: collapsible line ranges held by document marks, owned by a view that includes `Folding`; `LineLayout` consults them so motion skips hidden lines; `revision` increments after fold-set mutations.
 - `src/textedit/constraint.cr` — `Constraint` (`admits?(origin)`, `capacity`, both defaulted, plus `Constraint.capacity(list)`), `ReadOnly` (toggleable `active?`, admits only `Code`) and `MaxLength`.
 - `src/textedit/history.cr` — `Commit` (gesture, origin, changes, carets before and after), the `History` interface with `History::Restore` (edits to apply in order and carets to seat), and `History::Linear`: undo and redo stacks, typing and deleting grouped within a time window, a save point, an injectable clock, and no buffer access. It ignores `Undo` and `Redo` commits.
 - `src/textedit/snippet.cr` — `Snippet`: the LSP snippet parser (`Snippet::Parser`) producing a `Template`, and the live session holding each stop as a pair of marks. Mirrored stops become several carets, so typing fills them together.
@@ -61,6 +61,7 @@ Orientation for AI agents working on this repository.
 - `crystal spec` — run the suite.
 - `crystal spec spec/editing_spec.cr` — run one file.
 - `crystal build --no-codegen src/textedit.cr` — fast compile check. It instantiates nothing, so run the specs to type-check feature modules.
+- `crystal docs` — generate API documentation and review the public surface.
 
 ## Rules
 
@@ -88,10 +89,13 @@ Orientation for AI agents working on this repository.
 
 ## Code standards
 
-- Compiler-friendly, performance-focused, idiomatic and data-driven.
-- The usage-facing API must be ergonomic.
-- Avoid shotgun surgery: one change should land in one place.
-- No comments, except every file starts with a comment containing its own path (e.g. `# src/textedit.cr`).
-- Never use `out` as an identifier.
-- Never edit the `version` field in `shard.yml`.
-- Keep `README.md` (usage and public API) and this file in sync with the code.
+- Compiler-friendly, performance-focused, idiomatic Crystal.
+- Data-driven design: tables and records over branching logic.
+- Every file starts with a comment holding its path (`# src/textedit.cr`).
+- Comments are sparse, but public API gets comments for `crystal docs` (~/.lib/doc-lib/crystal/documenting_code.md).
+- The user-facing API must be ergonomic.
+- Avoid shotgun surgery: one change, one place.
+- Breaking API is fine when it buys a clean design; list what breaks.
+- No stubs or placeholders; don't add functionality nobody asked for.
+- Don't change the version in shard.yml.
+- Keep README.md in sync with the code.

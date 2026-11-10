@@ -1,5 +1,6 @@
 # src/textedit/view.cr
 module Textedit
+  # Caret and selection movement commands.
   enum Motion
     Left
     Right
@@ -17,11 +18,15 @@ module Textedit
     DocumentStart
     DocumentEnd
 
+    # Returns `false`; motion commands never change text.
     def edits? : Bool
       false
     end
   end
 
+  # Carets, selection, layout, and motion over a shared `Document`.
+  #
+  # Feature modules add editing commands without changing the document's shared state.
   class View
     getter document : Document
     getter buffer   : Buffer
@@ -33,14 +38,17 @@ module Textedit
 
     @graphemes : Graphemes
 
+    # Creates a view with its own document, merging *options* over `.defaults`.
     def self.new(graphemes : Graphemes, text : String = "", **options)
       new(Document.new(graphemes, text, **defaults.merge(options)))
     end
 
+    # Returns default document options for this view type.
     def self.defaults
       NamedTuple.new
     end
 
+    # Attaches a view to an existing *document*, initially placing one caret at the end.
     def initialize(@document : Document, *, layout : Layout? = nil)
       @buffer    = @document.buffer
       @graphemes = @document.graphemes
@@ -51,34 +59,42 @@ module Textedit
       @document.attach(self)
     end
 
+    # Replaces the layout used for display-cell motion.
     def layout=(value : Layout) : Layout
       @layout = value
     end
 
+    # Detaches the view so it no longer follows document edits.
     def close : Nil
       @document.detach(self)
     end
 
+    # Returns the document text with `\n` line breaks.
     def value : String
       @document.value
     end
 
+    # Replaces the document text and places this view's caret at the end.
     def value=(value : String) : String
       @document.assign(value, self)
     end
 
+    # Replaces the document text with an empty string.
     def clear : Nil
       self.value = ""
     end
 
+    # Returns the document length in grapheme clusters, including line breaks.
     def length : Int32
       @buffer.size
     end
 
+    # Returns the caret used by primary-selection operations.
     def primary_caret : Caret
       @carets[@primary]
     end
 
+    # Returns the head offset of the primary caret.
     def cursor : Int32
       primary_caret.head
     end
@@ -87,14 +103,17 @@ module Textedit
       !primary_caret.empty?
     end
 
+    # Returns the primary selection as an exclusive range.
     def selection : Range(Int32, Int32)
       primary_caret.range
     end
 
+    # Returns the text selected by the primary caret.
     def selected_text : String
       @buffer.slice_text(selection)
     end
 
+    # Returns text from every nonempty selection.
     def selected_texts : Array(String)
       @carets.reject(&.empty?).map { |caret| @buffer.slice_text(caret.range) }
     end
@@ -108,12 +127,14 @@ module Textedit
       @carets.size > 1
     end
 
+    # Replaces all carets with one at *index*, optionally extending its selection.
     def move(index : Int32, selecting : Bool = false) : Nil
       anchor = selecting ? primary_caret.anchor : index
       seat([Caret.new(anchor, index)], 0)
       selected if selecting && !@dragging
     end
 
+    # Moves every caret head through the block, preserving anchors when *selecting*.
     def move_carets(selecting : Bool, & : Caret -> Int32) : Nil
       list = @carets.map do |caret|
         head = yield caret
@@ -123,27 +144,33 @@ module Textedit
       selected if selecting && !@dragging
     end
 
+    # Replaces all carets with one directional selection.
     def select_range(from : Int32, to : Int32) : Nil
       seat([Caret.new(from, to)], 0)
     end
 
+    # Places carets, clamps them to the text, and sorts and merges overlapping selections.
     def place_carets(carets : Array(Caret), primary : Int32 = carets.size - 1) : Nil
       seat(carets, primary)
     end
 
+    # Adds a caret and makes it primary.
     def add_caret(head : Int32, anchor : Int32 = head) : Nil
       list = @carets + [Caret.new(anchor, head)]
       seat(list, list.size - 1)
     end
 
+    # Applies structural `Code` replacements while carrying this view's carets.
     def replace_ranges(edits : Array(Edit), gesture : Gesture = Gesture::Other, after : Array(Caret)? = nil) : Bool
       @document.replace_ranges(edits, gesture, after, view: self)
     end
 
+    # Groups edits into one history commit and listener batch for this view.
     def transaction(& : -> T) : T forall T
       @document.transaction(self) { yield }
     end
 
+    # Runs a motion command, extending selections when *selecting* is true.
     def run(command : Motion, selecting : Bool = false) : Bool
       return false unless enter(command)
 

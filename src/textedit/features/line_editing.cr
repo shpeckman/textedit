@@ -1,5 +1,6 @@
 # src/textedit/features/line_editing.cr
 module Textedit
+  # Commands that operate on whole lines under the carets.
   enum Lines
     Indent
     Outdent
@@ -9,12 +10,17 @@ module Textedit
     Duplicate
     Delete
 
+    # Returns `true`; line commands change text.
     def edits? : Bool
       true
     end
   end
 
+  # Indents, comments, moves, duplicates, and deletes lines under the carets.
+  #
+  # Include `Spacing` before this module. It extends `Tab` to indent multiline selections.
   module LineEditing
+    # Runs a line command and returns whether it changed the text.
     def run(command : Lines, selecting : Bool = false) : Bool
       return false unless enter(command)
 

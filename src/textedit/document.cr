@@ -1,5 +1,9 @@
 # src/textedit/document.cr
 module Textedit
+  # Shared text, editing services, marks, listeners, and attached views.
+  #
+  # All text mutations pass through the document so history, constraints,
+  # followers, and other views observe the same ordered changes.
   class Document
     getter graphemes   : Graphemes
     getter buffer      : Buffer
@@ -24,6 +28,10 @@ module Textedit
     @acting        : View?
     @saved         : Int32
 
+    # Creates a document from text or an existing buffer.
+    #
+    # String input is normalized to `\n`, filtered, and truncated to the combined
+    # constraint capacity. Options configure filtering, history, constraints, and style.
     def initialize(graphemes : Graphemes, text : String | Buffer = "", *,
                    filter      : Filter   = SingleLine.new,
                    history     : History? = History::Linear.new(graphemes),
@@ -63,6 +71,7 @@ module Textedit
       @buffer.on_change { |change| applied(change) }
     end
 
+    # Replaces the constraints and truncates the value when its new capacity is lower.
     def constraints=(list : Array) : Array(Constraint)
       @constraints = list.map(&.as(Constraint))
       max = capacity
@@ -70,32 +79,42 @@ module Textedit
       @constraints
     end
 
+    # Returns whether every constraint admits an edit from *origin*.
     def admits?(origin : Origin = Origin::User) : Bool
       @constraints.all?(&.admits?(origin))
     end
 
+    # Returns the lowest constraint capacity in clusters, or `nil` when unbounded.
     def capacity : Int32?
       Constraint.capacity(@constraints)
     end
 
+    # Registers *listener* and returns a proc that removes it.
     def listen(listener : Listener) : Proc(Nil)
       @listeners << listener
       -> { @listeners.delete(listener); nil }
     end
 
+    # Registers *follower* for each change and returns a proc that removes it.
     def track(follower : Follower) : Proc(Nil)
       @followers << follower
       -> { @followers.delete(follower); nil }
     end
 
+    # Returns the complete text with `\n` line breaks.
     def value : String
       @buffer.text
     end
 
+    # Replaces the complete text as an undoable `Code` edit.
+    #
+    # Input is filtered, normalized, and limited by capacity. Every attached
+    # view's carets follow the replacement.
     def value=(value : String) : String
       assign(value, nil)
     end
 
+    # Replaces the complete text with an empty string.
     def clear : Nil
       self.value = ""
     end
@@ -104,10 +123,12 @@ module Textedit
       @buffer.size
     end
 
+    # Returns the number of buffer edits, including undo and redo.
     def revision : Int32
       @buffer.revision
     end
 
+    # Returns whether the text differs from the last save point.
     def modified? : Bool
       if found = @history
         found.modified?
@@ -116,21 +137,27 @@ module Textedit
       end
     end
 
+    # Marks the current text as saved.
     def mark_saved : Nil
       @history.try(&.mark_saved)
       @saved = @buffer.revision
     end
 
+    # Creates and registers a mark that follows subsequent edits.
     def mark(offset : Int32, gravity : Gravity = Gravity::Left) : Mark
       found = Mark.new(offset.clamp(0, length), gravity)
       @marks << found
       found
     end
 
+    # Stops *mark* from following subsequent edits.
     def unmark(mark : Mark) : Nil
       @marks.delete(mark)
     end
 
+    # Maps an offset from an earlier revision to the current text.
+    #
+    # Returns `nil` when the revision is newer or its changes are no longer retained.
     def map(offset : Int32, from : Int32, gravity : Gravity = Gravity::Left) : Int32?
       changes = @buffer.changes_since(from) || return nil
       spot    = Mark.new(offset.clamp(0, length), gravity)
@@ -138,12 +165,16 @@ module Textedit
       spot.offset
     end
 
+    # Maps an exclusive range from an earlier revision without growing at its edges.
     def map(range : Range(Int32, Int32), from : Int32) : Range(Int32, Int32)?
       start = map(range.begin, from, Gravity::Right) || return nil
       stop  = map(Math.max(range.end, range.begin), from, Gravity::Left) || return nil
       start...Math.max(stop, start)
     end
 
+    # Groups edits into one history commit and listener batch and returns the block's value.
+    #
+    # Transactions may nest. Undo and redo return `false` while one is active.
     def transaction(view : View? = nil, & : -> T) : T forall T
       outer = @depth == 0
       if outer
@@ -164,14 +195,20 @@ module Textedit
       end
     end
 
+    # Undoes one history step and returns whether a step was applied.
     def undo(view : View? = nil) : Bool
       revert(view, Origin::Undo)
     end
 
+    # Redoes one history step and returns whether a step was applied.
     def redo(view : View? = nil) : Bool
       revert(view, Origin::Redo)
     end
 
+    # Applies several replacements in reverse offset order as one history commit.
+    #
+    # Text bypasses the filter and capacity. The default origin is `Code`; other
+    # views follow the changes. Optional *after* carets seat the acting *view*.
     def replace_ranges(edits : Array(Edit), gesture : Gesture = Gesture::Other, after : Array(Caret)? = nil, *,
                        view : View? = nil, origin : Origin = Origin::Code) : Bool
       return false unless admits?(origin)

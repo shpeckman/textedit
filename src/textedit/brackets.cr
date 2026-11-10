@@ -1,5 +1,6 @@
 # src/textedit/brackets.cr
 module Textedit
+  # :nodoc:
   module Brackets
     PAIRS   = {"(" => ")", "[" => "]", "{" => "}", "\"" => "\"", "'" => "'"}
     CLOSING = {")", "]", "}", "\"", "'"}

@@ -1,6 +1,8 @@
 # src/textedit/mapped.cr
 module Textedit
+  # POSIX memory mapping of a file, read-only by default or shared and writable on request.
   class Mapped
+    # Error raised when a file cannot be mapped or mapped bytes are unavailable.
     class Error < Exception
     end
 
@@ -11,6 +13,7 @@ module Textedit
 
     @address : Pointer(Void)
 
+    # Opens a mapping for the duration of the block and always closes it afterward.
     def self.open(path : String, writable : Bool = false, & : Mapped -> T) : T forall T
       found = new(path, writable: writable)
       begin
@@ -20,6 +23,10 @@ module Textedit
       end
     end
 
+    # Opens a persistent mapping that closes on finalization or explicit `#close`.
+    #
+    # Writable mappings use shared storage, so byte writes reach the file.
+    # Raises `Error` on unsupported systems, mapping failure, or files larger than `Int32::MAX`.
     def initialize(@path : String, @writable : Bool = false)
       {% unless flag?(:unix) %}
         raise Error.new("Textedit::Mapped needs a POSIX system")
@@ -49,6 +56,9 @@ module Textedit
       end
     end
 
+    # Returns the mapped bytes, invalid after `#close`.
+    #
+    # The slice is read-only unless the mapping is writable. Raises `Error` when closed.
     def bytes : Bytes
       raise Error.new("#{@path} is no longer mapped") unless @open
       return Bytes.empty if @bytesize == 0
@@ -56,12 +66,14 @@ module Textedit
       Bytes.new(@address.as(UInt8*), @bytesize, read_only: !@writable)
     end
 
+    # Advises the operating system that the mapping will be read sequentially.
     def sequential : Nil
       return unless @open && @bytesize > 0
 
       LibC.madvise(@address, @bytesize, LibC::MADV_SEQUENTIAL)
     end
 
+    # Releases the mapping; repeated calls have no effect.
     def close : Nil
       return unless @open
 
@@ -70,6 +82,7 @@ module Textedit
       @address = Pointer(Void).null
     end
 
+    # :nodoc:
     def finalize
       close
     end

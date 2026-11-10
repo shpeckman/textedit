@@ -48,5 +48,9 @@ require "./textedit/features/recording"
 require "./textedit/features/recalling"
 require "./textedit/presets"
 
+# Multi-caret text editing model composed from documents, views, and feature modules.
+#
+# Offsets count grapheme clusters unless a method explicitly accepts another unit.
+# Hosts supply grapheme segmentation and connect rendering, clipboard, and input.
 module Textedit
 end

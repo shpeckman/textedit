@@ -1,5 +1,6 @@
 # src/textedit/index.cr
 module Textedit
+  # :nodoc:
   class Index
     BLOCK = 512
     LIMIT = 1024

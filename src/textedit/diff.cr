@@ -1,5 +1,6 @@
 # src/textedit/diff.cr
 module Textedit
+  # :nodoc:
   module Diff
     record Hunk, old_start : Int32, old_count : Int32, new_start : Int32, new_count : Int32
 
@@ -111,6 +112,10 @@ module Textedit
     end
   end
 
+  # Returns line-oriented edits that transform *old* into *new*.
+  #
+  # Returned ranges use grapheme-cluster offsets in *old*. When the differing
+  # region exceeds *limit*, returns one edit for that region instead.
   def self.diff(old : String, new : String, graphemes : Graphemes, limit : Int32 = Diff::LIMIT) : Array(Edit)
     return [] of Edit if old == new
 
