@@ -103,7 +103,7 @@ end
 
 describe Textedit::LineLayout do
   it "maps offsets to rows and display columns, counting wide clusters twice" do
-    text   = lines("a日本\nxy")
+    text = lines("a日本\nxy")
     layout = text.layout
     layout.row_count.should eq(2)
     layout.row_of(4).should eq(1)
@@ -116,6 +116,40 @@ describe Textedit::LineLayout do
     layout.offset_in(0, 99).should eq(3)
     layout.offset_in(1, 1).should eq(5)
     layout.page_rows.should eq(1)
+  end
+end
+
+describe Textedit::WrapLayout do
+  it "wraps lines after the last space that fits, or inside a word without one" do
+    text = lines("aaa bbb cc\nxyzwvu")
+    layout = Textedit::WrapLayout.new(text.buffer, 5)
+    layout.row_count.should eq(5)
+    {0, 4, 8, 11, 16}.each_with_index { |start, row| layout.row_start(row).should eq(start) }
+    layout.row_of(3).should eq(0)
+    layout.row_of(4).should eq(1)
+    layout.row_of(16).should eq(4)
+    layout.row_end(0).should eq(3)
+    layout.row_end(2).should eq(10)
+    layout.cell_of(6).should eq(Textedit::Cell.new(2, 1))
+    layout.offset_in(1, 99).should eq(7)
+    layout.offset_in(2, 1).should eq(9)
+  end
+
+  it "recounts its rows after a width change and an edit, and drives vertical motion" do
+    text = lines("one two three")
+    layout = Textedit::WrapLayout.new(text.buffer, 8, page_rows: 2)
+    text.layout = layout
+    layout.row_count.should eq(2)
+    text.move(1)
+    text.run(Textedit::Motion::Down)
+    text.cursor.should eq(9)
+    text.run(Textedit::Motion::RowEnd)
+    text.cursor.should eq(13)
+    layout.width = 20
+    layout.row_count.should eq(1)
+    text.value = "a\nb"
+    layout.row_count.should eq(2)
+    layout.page_rows.should eq(2)
   end
 end
 
@@ -135,9 +169,9 @@ end
 
 describe Textedit::Listener do
   it "hears every change as it lands, every batch once its carets are seated, and every caret move" do
-    text   = editor("ab")
+    text = editor("ab")
     events = Recorder.new
-    stop   = text.document.listen(events)
+    stop = text.document.listen(events)
     text.place_carets([Textedit::Caret.at(1), Textedit::Caret.at(2)])
     text.insert("X")
     events.applied.should eq([change(2, "", "X"), change(1, "", "X")])

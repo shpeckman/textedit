@@ -389,7 +389,7 @@ The host plugs in through these modules. Each is small, and all but `Graphemes` 
 | `Filter` | `filter(text)` | `SingleLine`, `MultiLine(tab)` |
 | `Clipboard` | `write(text)`, `read { \|text\| }` | `Register` (in memory) |
 | `ClipboardHistory` | `size`, `read(index) { \|text\| }` | `Register` (100 entries) |
-| `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line) |
+| `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line), `WrapLayout` (lines wrapped at a width) |
 | `History` | `record`, `undo`, `redo`, `can_undo?`, `can_redo?`, `modified?`, `mark_saved`, `clear` | `History::Linear` |
 | `Constraint` | `admits?(origin)`, `capacity` | `ReadOnly`, `MaxLength` |
 | `Listener` | `applied`, `edited`, `moved` | no-ops to override |
@@ -403,7 +403,7 @@ The host plugs in through these modules. Each is small, and all but `Graphemes` 
 
 **Clipboard.** `read` takes a block so a clipboard can answer later, for example after asking a terminal; the paste happens when the block is called. `Register` also includes `ClipboardHistory`, keeping the newest 100 unique entries and exposing them through `entries`; `Register.new(limit: n)` changes that bound. Other clipboards can opt into `PastePrevious` by including `ClipboardHistory`.
 
-**Layout.** `cell_of(offset)` returns a `Cell` (`column`, `row`) in display columns, and `offset_in(row, column)` goes back. A host that wraps lines implements `Layout` over its wrapped rows and assigns it with `view.layout = …`; vertical motion, paging (`page_rows`), smart Home, carets above and below and box selection then follow the wrapped rows.
+**Layout.** `cell_of(offset)` returns a `Cell` (`column`, `row`) in display columns, and `offset_in(row, column)` goes back. `WrapLayout.new(view.buffer, width, page_rows: rows)` wraps lines at a width, breaking after whitespace; set its `width` when the view resizes. A host with its own wrapping implements `Layout` over its rows. Either is assigned with `view.layout = …`; vertical motion, paging (`page_rows`), smart Home, carets above and below and box selection then follow the wrapped rows.
 
 **Listener.** `document.listen(listener)` returns a proc that removes it again.
 
@@ -525,7 +525,7 @@ folds.clear
 view.lift_carets             # moves carets on hidden lines to the end of the visible line above; false when none was hidden
 ```
 
-`LineLayout` consults the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` increments after fold-set mutations, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
+`LineLayout` and `WrapLayout` consult the view's folds, so `row_count`, vertical motion, paging, smart Home and carets above and below all skip hidden lines. A host with its own `Layout` overrides `Layout#folds=` (a no-op by default) to receive them: the view hands its folds to the layout when they are first made and to every layout assigned later. `folds.revision` increments after fold-set mutations, so a layout can tell when to recount its rows. `view.folds` creates the set on first use and `view.folds?` tells whether one exists.
 
 ## Snippets
 

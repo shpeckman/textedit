@@ -17,7 +17,7 @@ Orientation for AI agents working on this repository.
 - `src/textedit/caret.cr`, `change.cr`, `mark.cr` — caret ranges with an optional goal column, one reversible replacement (with its start and end points in any unit), and offsets that follow changes.
 - `src/textedit/brackets.cr` — `Brackets`: the shared pair tables (`PAIRS`, `CLOSING`, `OPENERS`, `CLOSERS`) and the scan `REACH` that typing, deleting, transforms and selection all read.
 - `src/textedit/decoration.cr`, `annotation.cr` — `Decoration` and `Annotation` values, and the `Decorations` and `Annotations` stores: `Follower`s made for one document, replaced per source, with `entries`, `between`, `at` (and `on` for annotations), proc `listen` and `close`.
-- `src/textedit/folds.cr` — `Folds`: collapsible line ranges held by document marks, owned by a view that includes `Folding`; `LineLayout` consults them so motion skips hidden lines; `revision` increments after fold-set mutations.
+- `src/textedit/folds.cr` — `Folds`: collapsible line ranges held by document marks, owned by a view that includes `Folding`; `LineLayout` and `WrapLayout` consult them so motion skips hidden lines; `revision` increments after fold-set mutations.
 - `src/textedit/constraint.cr` — `Constraint` (`admits?(origin)`, `capacity`, both defaulted, plus `Constraint.capacity(list)`), `ReadOnly` (toggleable `active?`, admits only `Code`) and `MaxLength`.
 - `src/textedit/history.cr` — `Commit` (gesture, origin, changes, carets before and after), the `History` interface with `History::Restore` (edits to apply in order and carets to seat), `Grouping` (`Adjacent` and `Never`), and `History::Linear`: undo and redo stacks, configurable grouping, a save point, an injectable clock, and no buffer access. It ignores `Undo` and `Redo` commits.
 - `src/textedit/history/tree.cr` — `History::Tree`: linked commit nodes preserve redo branches after new edits, `choose` selects an immediate child for redo, and save points use node identity. Nodes are retained until `clear`.
@@ -53,6 +53,7 @@ Orientation for AI agents working on this repository.
   - `filter.cr` — `Filter`, `SingleLine`, `MultiLine`.
   - `clipboard.cr` — `Clipboard`, optional `ClipboardHistory`, and the bounded in-memory `Register`.
   - `layout.cr` — `Layout` (with a no-op `folds=` a host layout overrides to receive the view's folds), `LineLayout`.
+  - `wrap_layout.cr` — `WrapLayout`: rows wrapped at `width` after the last whitespace cluster that fits; recounts its row tables lazily when the buffer revision, width or folds revision changes.
   - `listener.cr` — `Listener` with no-op `applied`, `edited` and `moved`, and `Follower`.
   - `history.cr` — `History`; `constraint.cr` — `Constraint`.
   - `token_source.cr` — `TokenSource` and `Tokenizer`; implemented outside this shard, for example by asekii-editor's `Asekii::Syntax::Highlighter` and `Asekii::Syntax::Tokenizer`.
