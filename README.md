@@ -208,7 +208,7 @@ text.modified?     # false until the text changes again
 
 ### Constraints
 
-A constraint decides whether edits from an `Origin` are admitted and how many clusters the text may hold. The document asks every constraint before each edit.
+A constraint decides whether edits from an `Origin` are admitted, how many clusters the text may hold and how many lines user edits may grow it to. The document asks every constraint before each edit.
 
 ```crystal
 lock = Textedit::ReadOnly.new          # active by default
@@ -216,9 +216,11 @@ text = Textedit::Document.new(graphemes, "fixed", constraints: [lock, Textedit::
 text.admits?                           # => false: user edits are refused
 lock.active = false                    # editable again
 text.capacity                          # => 80, the lowest capacity of all constraints
+notes = Textedit::Document.new(graphemes, "", filter: Textedit::MultiLine.new, constraints: [Textedit::MaxLines.new(5)])
+notes.line_capacity                    # => 5
 ```
 
-`Origin` is `User` (typing and commands), `Code` (`value=` and `replace_ranges` from the host), `Undo` or `Redo`. `ReadOnly` admits only `Code`, so the host can still set the text. `MaxLength` trims typed and pasted text to fit, shared across carets, and truncates text given to `value=` or to the constructor. A host constraint includes `Textedit::Constraint` and overrides `admits?(origin)`, `capacity`, or both.
+`Origin` is `User` (typing and commands), `Code` (`value=` and `replace_ranges` from the host), `Undo` or `Redo`. `ReadOnly` admits only `Code`, so the host can still set the text. `MaxLength` trims typed and pasted text to fit, shared across carets, and truncates text given to `value=` or to the constructor. `MaxLines` refuses a user edit (typing, pasting, commands) that would leave more lines than its limit and more than before, so edits on longer text that keep or drop lines still work; `value=`, the constructor and `Code` `replace_ranges` are not limited. A host constraint includes `Textedit::Constraint` and overrides `admits?(origin)`, `capacity`, `line_capacity`, or any of them.
 
 While a document refuses user edits, a view refuses every command whose enum edits — `Deletion`, `Whitespace`, `Lines`, `Transform`, `Clip`, `UndoRedo` and `Recall` — along with `insert`, `paste`, `insert_snippet`, `replace_match` and `replace_all`. Motion, selection and copy still work.
 
@@ -391,7 +393,7 @@ The host plugs in through these modules. Each is small, and all but `Graphemes` 
 | `ClipboardHistory` | `size`, `read(index) { \|text\| }` | `Register` (100 entries) |
 | `Layout` | `row_count`, `row_of`, `row_start`, `row_end`, `cell_of`, `offset_in`, `page_rows` | `LineLayout` (one row per line), `WrapLayout` (lines wrapped at a width) |
 | `History` | `record`, `undo`, `redo`, `can_undo?`, `can_redo?`, `modified?`, `mark_saved`, `clear` | `History::Linear` |
-| `Constraint` | `admits?(origin)`, `capacity` | `ReadOnly`, `MaxLength` |
+| `Constraint` | `admits?(origin)`, `capacity`, `line_capacity` | `ReadOnly`, `MaxLength`, `MaxLines` |
 | `Listener` | `applied`, `edited`, `moved` | no-ops to override |
 | `Follower` | `follow(change)` | `Decorations`, `Annotations` |
 | `TokenSource` | `tokens(buffer, line)` | none |

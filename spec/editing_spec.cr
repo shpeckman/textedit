@@ -45,6 +45,23 @@ describe Textedit::Editor do
       long.document.capacity.should eq(3)
     end
 
+    it "refuses user edits growing past a line capacity" do
+      text = lines("a", constraints: [Textedit::MaxLines.new(2)])
+      text.document.line_capacity.should eq(2)
+      text.run(Textedit::Whitespace::NewLine).should be_true
+      text.run(Textedit::Whitespace::NewLine).should be_false
+      text.run(Textedit::Lines::Duplicate).should be_false
+      text.paste("x\ny").should be_false
+      text.value.should eq("a\n")
+      text.run(Textedit::Selection::All)
+      text.paste("x\ny").should be_true
+      text.value.should eq("x\ny")
+      text.value = "1\n2\n3"
+      text.value.should eq("1\n2\n3")
+      text.run(Textedit::Lines::Delete).should be_true
+      text.value.should eq("1\n2")
+    end
+
     it "clears the value and reports nothing when it is unchanged" do
       text   = editor("abc")
       events = Recorder.new

@@ -13,6 +13,17 @@ module Textedit
       limit
     end
 
+    # :nodoc:
+    def self.line_capacity(constraints : Array(Constraint)) : Int32?
+      limit = nil.as(Int32?)
+      constraints.each do |constraint|
+        if max = constraint.line_capacity
+          limit = limit ? Math.min(limit, max) : max
+        end
+      end
+      limit
+    end
+
     # Returns whether an edit from *origin* may proceed; defaults to `true`.
     def admits?(origin : Origin) : Bool
       true
@@ -20,6 +31,12 @@ module Textedit
 
     # Returns a maximum document size in clusters, or `nil` for no limit.
     def capacity : Int32?
+      nil
+    end
+
+    # Returns a maximum number of lines user edits may grow the text to, or
+    # `nil` for no limit.
+    def line_capacity : Int32?
       nil
     end
   end
@@ -51,6 +68,22 @@ module Textedit
     end
 
     def capacity : Int32?
+      @max
+    end
+  end
+
+  # Constraint that refuses user edits growing a document past a number of lines.
+  struct MaxLines
+    include Constraint
+
+    getter max : Int32
+
+    # Creates a limit, clamping *max* values below one to one.
+    def initialize(max : Int32)
+      @max = Math.max(max, 1)
+    end
+
+    def line_capacity : Int32?
       @max
     end
   end

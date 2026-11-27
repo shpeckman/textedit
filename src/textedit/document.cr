@@ -89,6 +89,11 @@ module Textedit
       Constraint.capacity(@constraints)
     end
 
+    # Returns the lowest constraint line capacity, or `nil` when unbounded.
+    def line_capacity : Int32?
+      Constraint.line_capacity(@constraints)
+    end
+
     # Registers *listener* and returns a proc that removes it.
     def listen(listener : Listener) : Proc(Nil)
       @listeners << listener
@@ -225,6 +230,7 @@ module Textedit
       end
 
       return false if kept.empty?
+      return false if !origin.code? && overflows?(kept) { |edit| {edit.range, edit.text} }
 
       before  = view.try(&.carets) || [] of Caret
       primary = view.try(&.primary) || 0
@@ -275,6 +281,7 @@ module Textedit
       end
 
       return false if strokes.all?(&.nil?)
+      return false if overflows?(strokes.compact) { |stroke| {stroke.range, stroke.text} }
 
       changes = Array(Change?).new(strokes.size, nil)
       applied = [] of Change
@@ -352,6 +359,17 @@ module Textedit
 
     protected def count(text : String) : Int32
       text.empty? ? 0 : @graphemes.boundaries(text).size - 1
+    end
+
+    # Returns whether replacing the ranges the block yields for *edits* with
+    # their texts grows the text past the line capacity.
+    private def overflows?(edits : Array(T), & : T -> {Range(Int32, Int32), String}) : Bool forall T
+      max = line_capacity || return false
+      grown = edits.sum do |edit|
+        range, text = yield edit
+        text.count('\n') - (@buffer.position(range.end).line - @buffer.position(range.begin).line)
+      end
+      grown > 0 && @buffer.line_count + grown > max
     end
 
     private def revert(view : View?, origin : Origin) : Bool
